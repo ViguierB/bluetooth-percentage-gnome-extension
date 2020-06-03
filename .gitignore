@@ -1,2 +1,4 @@
-*.o
 battery_level_engine
+!battery_level_engine/
+*.o
+!*.c
