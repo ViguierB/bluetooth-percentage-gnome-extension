@@ -10,7 +10,6 @@
 #include <bluetooth/rfcomm.h>
 #include <errno.h>
 
-#define member_size(type, member) sizeof(((type *)0)->member)
 #define _ble_send(ble, hdv_data) send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
 
 typedef int socket_t;
@@ -29,12 +28,11 @@ typedef struct ble_s {
   char            buffer[128];
 } ble_t;
 
-static char* _ble_strstr(const ble_t* ble, const char* find)
+static char* _ble_strstr(const ble_t* ble, const char* find, size_t slen)
 {
-  char    c, sc;
-  const char*   s = ble->buffer;
-  size_t  len;
-  size_t  slen = member_size(ble_t, buffer);
+  char        c, sc;
+  const char* s = ble->buffer;
+  size_t      len;
 
   if ((c = *find++) != '\0') {
     len = strlen(find);
@@ -97,17 +95,17 @@ int   ble_get_battery_level(ble_t* ble) {
     ssize_t recv_len = 0;
 
     while ((recv_len = recv(ble->sock, ble->buffer, sizeof ble->buffer, 0)) >= 0) {
-      if (_ble_strstr(ble, "BRSF")) {
+      if (_ble_strstr(ble, "BRSF", recv_len)) {
         _ble_send(ble, "+BRSF:20");
         _ble_send(ble, "OK");
-      } else if(_ble_strstr(ble, "CIND=")) {
+      } else if(_ble_strstr(ble, "CIND=", recv_len)) {
         _ble_send(ble, "+CIND: (\"battchg\",(0-5))");
         _ble_send(ble, "OK");
-      } else if (_ble_strstr(ble, "CIND?")) {
+      } else if (_ble_strstr(ble, "CIND?", recv_len)) {
         _ble_send(ble, "+CIND: 5");
         _ble_send(ble, "OK");
-      } else if (_ble_strstr(ble, "IPHONEACCEV")) {
-        if (!_ble_strstr(ble, ",")) { continue; }
+      } else if (_ble_strstr(ble, "IPHONEACCEV", recv_len)) {
+        if (!_ble_strstr(ble, ",", recv_len)) { continue; }
         ble->buffer[recv_len] = '\0';
         /* https://developer.apple.com/accessories/Accessory-Design-Guidelines.pdf */
         
