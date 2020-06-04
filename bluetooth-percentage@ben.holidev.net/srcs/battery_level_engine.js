@@ -18,20 +18,19 @@ class _bluetooth_battery_level_engine extends signals {
 
   enable() {
     this.register_signal(this._bt_model, 'row-changed', (_1, _2, iter) => {
-        if (iter) {
-            let device = new bluetooth_device(this._bt_model, iter);
-            this.emit('device-changed', device);
-        }
-
+      if (iter) {
+        let device = new bluetooth_device(this._bt_model, iter);
+        this.emit('device-changed', device);
+      }
     });
-    this.register_signal(this._model, 'row-deleted', () => {
-        this.emit('device-deleted');
+    this.register_signal(this._bt_model, 'row-deleted', () => {
+      this.emit('device-deleted');
     });
-    this.register_signal(this._model, 'row-inserted', (_1, _2, iter) => {
-        if (iter) {
-            let device = new bluetooth_device(this._bt_model, iter);
-            this.emit('device-inserted', device);
-        }
+    this.register_signal(this._bt_model, 'row-inserted', (_1, _2, iter) => {
+      if (iter) {
+        let device = new bluetooth_device(this._bt_model, iter);
+        this.emit('device-inserted', device);
+      }
     });
   }
 

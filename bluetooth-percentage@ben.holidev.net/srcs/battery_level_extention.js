@@ -5,9 +5,11 @@ const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const { bluetooth_battery_level_engine } = Me.imports.srcs.battery_level_engine;
+const { signals } = Me.imports.srcs.misc.signals;
 
-class _bluetooth_battery_level_extention {
+class _bluetooth_battery_level_extention extends signals {
   constructor() {
+    super();
     this._bluetooth_indicator = Main.panel.statusArea.aggregateMenu._bluetooth;
     this._menu = this._bluetooth_indicator._item.menu;
     this._bt_level = new bluetooth_battery_level_engine(new GnomeBluetooth.Client());
@@ -25,6 +27,16 @@ class _bluetooth_battery_level_extention {
       if (d.is_connected) {
         let battery_level = await this._bt_level.get_battery_level(d.mac);
 
+        if (Number.isNaN(battery_level)) {
+          this._bluetooth_indicator._item.label.text = `${d.name}`;
+          return new Promise((resolve) => {
+            GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, async () => {r
+              await this.refresh();
+              resolve();
+            });
+          });
+        }
+
         this._bluetooth_indicator._item.label.text = `${d.name} (${battery_level} %)`;
       }
     }));
@@ -36,20 +48,49 @@ class _bluetooth_battery_level_extention {
     } catch (e) {
       error(e);
     }
-    this._next_loop_handle = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, 180, () => {
+    this._next_loop_handle = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
       this.loop();
     });
   }
 
+  _register_signals() {
+    this.register_signal(this._bt_level, 'device-inserted', (_ctrl, _device) => {
+      if (this._next_loop_handle !== null) {
+        GLib.source_remove(this._next_loop_handle);
+      }
+      this.loop();
+    });
+    this.register_signal(this._bt_level, 'device-changed', (_ctrl, _device) => {
+      if (this._next_loop_handle !== null) {
+        GLib.source_remove(this._next_loop_handle);
+      }
+      this.loop();
+    });
+    this.register_signal(this._bt_level, 'device-deleted', () => {
+      if (this._next_loop_handle !== null) {
+        GLib.source_remove(this._next_loop_handle);
+      }
+      this.loop();
+    });
+  }
+
+  _unregister_signals() {
+    this.unregister_signal_all();
+  }
+
   enable() {
     // make sure GnomeBluetooth is ready
-    GLib.timeout_add_seconds(GLib.PRIORITY_LOW, 0, () => {
+    this._bt_level.enable();
+    GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 0, () => {
+      this._register_signals();
       this.loop()
     });
   }
 
   disable() {
-    if (this._next_loop_handle) {
+    this._bt_level.disable();
+    this._unregister_signals();
+    if (this._next_loop_handle !== null) {
       GLib.source_remove(this._next_loop_handle);
     }
   }

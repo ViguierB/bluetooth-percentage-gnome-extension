@@ -2,7 +2,9 @@
   "name": "Bluetooth Percentage",
   "description": "Show bluetooth device battery level",
   "uuid": "bluetooth-percentage@ben.holidev.net",
+  "url": "https://gitlab.holidev.net/ben/gnome-bluetooth-percentage",
   "shell-version": [
     "3.34"
-  ]
+  ],
+  "version": 0
 }

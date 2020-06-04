@@ -6,7 +6,7 @@ var signals = class {
   }
 
   register_signal(subject, sig_name, hdl) {
-    if (!this._signals) this._signals = [];
+    if (!this._signals) { this._signals = []; };
 
     let signal_id = subject.connect(sig_name, hdl);
     this._signals.push({
