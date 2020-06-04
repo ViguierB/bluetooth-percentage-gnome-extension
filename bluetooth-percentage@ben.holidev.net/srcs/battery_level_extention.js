@@ -17,6 +17,7 @@ class _bluetooth_battery_level_extention extends signals {
   }
 
   async refresh() {
+    log(['Bluetooth percentage: refreshing']);
     const devices = this._bt_level.get_devices();
     const connected_devices_number = this._bt_level.count_connected_devices(devices)
 
@@ -48,7 +49,7 @@ class _bluetooth_battery_level_extention extends signals {
     } catch (e) {
       error(e);
     }
-    this._next_loop_handle = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
+    this._next_loop_handle = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 180, () => {
       this.loop();
     });
   }
@@ -58,19 +59,25 @@ class _bluetooth_battery_level_extention extends signals {
       if (this._next_loop_handle !== null) {
         GLib.source_remove(this._next_loop_handle);
       }
-      this.loop();
+      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+        this.loop()
+      });
     });
     this.register_signal(this._bt_level, 'device-changed', (_ctrl, _device) => {
       if (this._next_loop_handle !== null) {
         GLib.source_remove(this._next_loop_handle);
       }
-      this.loop();
+      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+        this.loop()
+      });
     });
     this.register_signal(this._bt_level, 'device-deleted', () => {
       if (this._next_loop_handle !== null) {
         GLib.source_remove(this._next_loop_handle);
       }
-      this.loop();
+      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+        this.loop()
+      });
     });
   }
 
@@ -80,9 +87,9 @@ class _bluetooth_battery_level_extention extends signals {
 
   enable() {
     // make sure GnomeBluetooth is ready
+    this._register_signals();
     this._bt_level.enable();
     GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 0, () => {
-      this._register_signals();
       this.loop()
     });
   }
