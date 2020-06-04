@@ -1,7 +1,7 @@
 {
-  "name": "Gnome Bluetooth Percentage",
+  "name": "Bluetooth Percentage",
   "description": "Show bluetooth device battery level",
-  "uuid": "gnome-bluetooth-percentage@ben.holidev.net",
+  "uuid": "bluetooth-percentage@ben.holidev.net",
   "shell-version": [
     "3.34"
   ]

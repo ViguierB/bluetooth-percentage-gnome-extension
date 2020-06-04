@@ -25,7 +25,7 @@ class _bluetooth_battery_level_extention {
       if (d.is_connected) {
         let battery_level = await this._bt_level.get_battery_level(d.mac);
 
-        this._bluetooth_indicator._item.label.text += ` (${battery_level} %)`;
+        this._bluetooth_indicator._item.label.text = `${d.name} (${battery_level} %)`;
       }
     }));
   }

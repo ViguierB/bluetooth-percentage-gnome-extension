@@ -1,15 +1,42 @@
 const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
+const Signals = imports.signals;
 const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const extensionUtils = imports.misc.extensionUtils;
 const Me = extensionUtils.getCurrentExtension();
 
+const { signals } = Me.imports.srcs.misc.signals;
 
-class _bluetooth_battery_level_engine {
+
+class _bluetooth_battery_level_engine extends signals {
   constructor(gnome_bluetooth_client) {
+    super();
     this._bt_client = gnome_bluetooth_client;
     this._bt_model = this._bt_client.get_model();
+  }
+
+  enable() {
+    this.register_signal(this._bt_model, 'row-changed', (_1, _2, iter) => {
+        if (iter) {
+            let device = new bluetooth_device(this._bt_model, iter);
+            this.emit('device-changed', device);
+        }
+
+    });
+    this.register_signal(this._model, 'row-deleted', () => {
+        this.emit('device-deleted');
+    });
+    this.register_signal(this._model, 'row-inserted', (_1, _2, iter) => {
+        if (iter) {
+            let device = new bluetooth_device(this._bt_model, iter);
+            this.emit('device-inserted', device);
+        }
+    });
+  }
+
+  disable() {
+    this.unregister_signal_all();
   }
 
   async _run_battery_level_command(addr, channel = 10, cancellable = null) {
@@ -82,6 +109,8 @@ class _bluetooth_battery_level_engine {
     return n;
   }
 }
+
+Signals.addSignalMethods(_bluetooth_battery_level_engine.prototype);
 
 class bluetooth_device {
 
