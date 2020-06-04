@@ -10,6 +10,8 @@
 #include <bluetooth/rfcomm.h>
 #include <errno.h>
 
+#define BUFFER_SIZE 128
+
 #define _ble_send(ble, hdv_data) send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
 
 typedef int socket_t;
@@ -24,7 +26,7 @@ typedef struct ble_s {
   char            is_connected;
   char            used;
   char*           ble_error_message;
-  char            buffer[128];
+  char            buffer[BUFFER_SIZE + 1]; // need one extra char in some cases
 } ble_t;
 
 static char* _ble_strstr(const ble_t* ble, const char* find, size_t slen)
@@ -97,7 +99,7 @@ int   ble_get_battery_level(ble_t* ble) {
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
-    while ((recv_len = recv(ble->sock, ble->buffer, sizeof ble->buffer, 0)) >= 0) {
+    while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
       if (_ble_strstr(ble, "BRSF", recv_len)) {
         _ble_send(ble, "+BRSF:20");
         _ble_send(ble, "OK");
@@ -113,12 +115,10 @@ int   ble_get_battery_level(ble_t* ble) {
         /* https://developer.apple.com/accessories/Accessory-Design-Guidelines.pdf */
         
         int n;
-        char** cut_iphoneaccev = split(ble->buffer, '=', &n);
+        char* iphoneaccev_values = strchr(ble->buffer, '=');
 
-        if (n >= 2) {
-          char** commands = split(cut_iphoneaccev[1], ',', &n);
-          
-          free_split(cut_iphoneaccev);
+        if (iphoneaccev_values++) {
+          char** commands = split(iphoneaccev_values, ',', &n);
           for (int i = 1; i < n - 1; i += 2) {
             char key = *(commands[i]);
 
@@ -133,8 +133,6 @@ int   ble_get_battery_level(ble_t* ble) {
             }
           }
           free_split(commands);
-        } else {
-          free_split(cut_iphoneaccev);
         }
       } else {
         _ble_send(ble, "OK");
