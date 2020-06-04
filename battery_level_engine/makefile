@@ -6,7 +6,9 @@ DEBUG	 =	true
 
 WALL		=	true
 
-RELEASE =	true
+ifndef	RELEASE
+	RELEASE =	false
+endif
 
 ALLOW_LSEEK =	true
 

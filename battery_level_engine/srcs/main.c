@@ -6,7 +6,7 @@ void*       create_battery_level_engine();
 int         delete_battery_level_engine(void*);
 int         ble_connect_to(void*, char* addr, uint16_t channel);
 int         ble_get_battery_level(void*);
-const char* ble_get_last_error_message();
+const char* ble_get_last_error_message(void*);
 
 int main(int ac, char **av) {
   if (ac != 3 ) {
@@ -32,14 +32,14 @@ int main(int ac, char **av) {
   }
 
   if (ble_connect_to(bl_engine, address, channel) < 0) {
-    fprintf(stderr, "unable to connect to this bleutooth device: %s\n", ble_get_last_error_message());
+    fprintf(stderr, "unable to connect to this bleutooth device: %s\n", ble_get_last_error_message(bl_engine));
     return EXIT_FAILURE;
   }
 
   int level = ble_get_battery_level(bl_engine);
 
   if (level == -1) {
-    fprintf(stderr, "%s\n", ble_get_last_error_message());
+    fprintf(stderr, "%s\n", ble_get_last_error_message(bl_engine));
     return EXIT_FAILURE;
   }
 

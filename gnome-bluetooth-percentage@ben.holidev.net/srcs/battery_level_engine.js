@@ -1,12 +1,16 @@
 const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
+const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const extensionUtils = imports.misc.extensionUtils;
 const Me = extensionUtils.getCurrentExtension();
 
 
 class _bluetooth_battery_level_engine {
-  constructor() {}
+  constructor(gnome_bluetooth_client) {
+    this._bt_client = gnome_bluetooth_client;
+    this._bt_model = this._bt_client.get_model();
+  }
 
   async _run_battery_level_command(addr, channel = 10, cancellable = null) {
     const flags = Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE;
@@ -32,19 +36,63 @@ class _bluetooth_battery_level_engine {
     });
   }
 
+  // from https://github.com/bjarosze/gnome-bluetooth-quick-connect/blob/master/bluetooth.js
+  get_devices() {
+    let adapter = this._get_default_adapter();
+    if (!adapter)
+      return [];
+    let devices = [];
+
+    let [ret, iter] = this._bt_model.iter_children(adapter);
+    while (ret) {
+      devices.push(new bluetooth_device(this._bt_model, iter));
+      ret = this._bt_model.iter_next(iter);
+    }
+
+    return devices;
+  }
+
+  // from https://github.com/bjarosze/gnome-bluetooth-quick-connect/blob/master/bluetooth.js
+  _get_default_adapter() {
+    let [ret, iter] = this._bt_model.get_iter_first();
+    while (ret) {
+      let is_default = this._bt_model.get_value(iter, GnomeBluetooth.Column.DEFAULT);
+      let is_powered = this._bt_model.get_value(iter, GnomeBluetooth.Column.POWERED);
+      if (is_default && is_powered)
+        return iter;
+      ret = this._bt_model.iter_next(iter);
+    }
+    return null;
+  }
+
   async get_battery_level(addr) {
     const proc_out = await this._run_battery_level_command(addr);
     if (proc_out.ok) {
-      return proc_out.stdout + " %";
+      return Number.parseInt(proc_out.stdout);
     } else {
       error(`battery_level_engine: ${proc_out.stderr}`);
       throw null;
     }
   }
 
-  get_connected_devices() {
-    
+  count_connected_devices(devices) {
+    let n = 0;
+
+    devices.forEach(d => { n += d.is_connected ? 1 : 0; });
+    return n;
   }
+}
+
+class bluetooth_device {
+
+  constructor(model, ll_device) {
+    this.name = model.get_value(ll_device, GnomeBluetooth.Column.NAME);
+    this.is_connected = model.get_value(ll_device, GnomeBluetooth.Column.CONNECTED);
+    this.is_paired = model.get_value(ll_device, GnomeBluetooth.Column.PAIRED);
+    this.mac = model.get_value(ll_device, GnomeBluetooth.Column.ADDRESS);
+    this.is_default = model.get_value(ll_device, GnomeBluetooth.Column.DEFAULT);
+  }
+
 }
 
 var bluetooth_battery_level_engine = _bluetooth_battery_level_engine;

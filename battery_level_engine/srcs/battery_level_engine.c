@@ -18,13 +18,12 @@ typedef struct sockaddr_rc sockaddr_rc_t;
 char  **split(char *inp, char sep, int *nb_lines);
 void  free_split(char** sstr);
 
-
-static const char*  ble_error_message = NULL;
-
 typedef struct ble_s {
   socket_t        sock;
   sockaddr_rc_t   rem_addr;
   char            is_connected;
+  char            used;
+  char*           ble_error_message;
   char            buffer[128];
 } ble_t;
 
@@ -54,7 +53,7 @@ ble_t* create_battery_level_engine() {
   ble_t* ble = calloc(1, sizeof(ble_t));
 
   if (!ble) {
-    ble_error_message = strerror(errno);
+    ble->ble_error_message = strerror(errno);
   }
   return ble;
 }
@@ -62,7 +61,7 @@ ble_t* create_battery_level_engine() {
 int   delete_battery_level_engine(ble_t* ble) {
   if (ble->is_connected) {
     if (close(ble->sock) < 0) {
-      ble_error_message = strerror(errno);
+      ble->ble_error_message = strerror(errno);
       return -1;
     }
   }
@@ -83,7 +82,7 @@ int   ble_connect_to(ble_t* ble, char* addr, uint16_t channel) {
   int connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
 
   if (connect_res < 0) {
-    ble_error_message = strerror(errno);
+    ble->ble_error_message = strerror(errno);
     return connect_res;
   }
   ble->is_connected = 1;
@@ -91,6 +90,10 @@ int   ble_connect_to(ble_t* ble, char* addr, uint16_t channel) {
 }
 
 int   ble_get_battery_level(ble_t* ble) {
+  if (ble->used) {
+    ble->ble_error_message = "This object as been used, recreate a new one for making a new request";
+    return -1;
+  }
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
@@ -125,6 +128,7 @@ int   ble_get_battery_level(ble_t* ble) {
               int   value = atoi(commands[i + 1]);
 
               free_split(commands);
+              ble->used = 1;
               return (value + 1) * 10;
             }
           }
@@ -137,14 +141,15 @@ int   ble_get_battery_level(ble_t* ble) {
       }
     }
 
-    ble_error_message = "Device not compatible";
+    ble->ble_error_message = "Device not compatible";
+    ble->used = 1;
     return -1;
   } else {
-    ble_error_message = "Not connect to a device: call ble_connect_to() before";
+    ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
     return -1;
   }
 }
 
-const char* ble_get_last_error_message() {
-  return ble_error_message;
+const char* ble_get_last_error_message(ble_t *ble) {
+  return ble->ble_error_message;
 }

@@ -31,5 +31,12 @@ function init() {
   // let settings = Convenience.getSettings();
 
   instance = new bluetooth_battery_level_extention(bluetooth_menu);
-  return instance;
+}
+
+function enable() {
+  instance.enable();
+}
+
+function disable() {
+  instance.disable();
 }
