@@ -23,20 +23,27 @@ const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const { bluetooth_battery_level_extention } = Me.imports.srcs.battery_level_extention;
+const { logger } = Me.imports.misc;
 
 var instance = null;
 
 function init() {
   const bluetooth_menu = Main.panel.statusArea.aggregateMenu._bluetooth;
   // let settings = Convenience.getSettings();
-
+  
   instance = new bluetooth_battery_level_extention(bluetooth_menu);
 }
 
 function enable() {
+  const date = new Date();
+  logger.open({
+    quiet: false,
+    log_file: `${Me.path}/.logs/${date.getDate()}-${date.getMonth()}-${date.getFullYear()}`
+  });
   instance.enable();
 }
 
 function disable() {
+  logger.close();
   instance.disable();
 }

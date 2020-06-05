@@ -6,8 +6,8 @@ const GnomeBluetooth = imports.gi.GnomeBluetooth;
 const extensionUtils = imports.misc.extensionUtils;
 const Me = extensionUtils.getCurrentExtension();
 
-const { signals } = Me.imports.srcs.misc.signals;
-
+const { signals } = Me.imports.misc;
+const { logger } = Me.imports.misc;
 
 class _bluetooth_battery_level_engine extends signals {
   constructor(gnome_bluetooth_client) {
@@ -45,11 +45,14 @@ class _bluetooth_battery_level_engine extends signals {
       flags: flags
     });
 
+
     proc.init(cancellable);
+
     return new Promise((resolve, reject) => {
       proc.communicate_utf8_async(null, cancellable, (proc, res) => {
         try {
           let [ok, stdout, stderr] = proc.communicate_utf8_finish(res);
+          logger.log({ "engine-output": { ok, stdout, stderr } });
           resolve({
             ok,
             stdout,
@@ -91,12 +94,18 @@ class _bluetooth_battery_level_engine extends signals {
     return null;
   }
 
-  async get_battery_level(addr) {
-    const proc_out = await this._run_battery_level_command(addr);
+  async get_battery_level(addr, timeout_in_second = 10) {
+    const cancel_token = new Gio.Cancellable();
+    const timeout_handle = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeout_in_second, () => {
+      logger.log('get_battery_level cancelled: timeout (10s)');
+      cancel_token.cancel();
+    });
+    const proc_out = await this._run_battery_level_command(addr, 10, cancel_token);
+    GLib.source_remove(timeout_handle);
     if (proc_out.ok) {
       return Number.parseInt(proc_out.stdout);
     } else {
-      error(`battery_level_engine: ${proc_out.stderr}`);
+      logger.error(`battery_level_engine: ${proc_out.stderr}`);
       throw null;
     }
   }
