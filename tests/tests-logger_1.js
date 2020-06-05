@@ -10,7 +10,7 @@ ptimeout().then(async () => {
 
   logger.open({
     quiet: false,
-    log_file: './log'
+    log_file: './log_test'
   });
 
   
@@ -20,7 +20,7 @@ ptimeout().then(async () => {
 
   logger.open({
     quiet: true,
-    log_file: './log'
+    log_file: './log_test'
   });
 
   
