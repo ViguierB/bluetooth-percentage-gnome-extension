@@ -37,7 +37,7 @@ function init() {
 function enable() {
   const date = new Date();
   logger.open({
-    quiet: false,
+    quiet: true,
     log_file: `${Me.path}/.logs/${date.getDate()}-${date.getMonth()}-${date.getFullYear()}`
   });
   instance.enable();
