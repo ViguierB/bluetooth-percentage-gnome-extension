@@ -28,8 +28,11 @@ class _logger {
     this.log("logger ready");
   }
 
-  close() {
-    this._filestream.close(null);
+  async close() {
+    return this.ready().then(() => {
+      this._filestream.close(null);
+      delete this._filestream;
+    })
   }
 
   ready() {

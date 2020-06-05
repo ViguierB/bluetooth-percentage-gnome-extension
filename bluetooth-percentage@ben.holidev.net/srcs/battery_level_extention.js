@@ -5,9 +5,12 @@ const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const { bluetooth_battery_level_engine } = Me.imports.srcs.battery_level_engine;
-const { signals } = Me.imports.misc;
-const { logger } = Me.imports.misc;
-const { event_trigger_attenuator } = Me.imports.misc;
+const {
+  signals,
+  logger,
+  event_trigger_attenuator,
+  ptimeout
+} = Me.imports.misc;
 
 class _bluetooth_battery_level_extention extends signals {
   constructor() {
@@ -15,7 +18,7 @@ class _bluetooth_battery_level_extention extends signals {
     this._bluetooth_indicator = Main.panel.statusArea.aggregateMenu._bluetooth;
     this._menu = this._bluetooth_indicator._item.menu;
     this._bt_level = new bluetooth_battery_level_engine(new GnomeBluetooth.Client());
-    this._next_loop_handle = null;
+    this._next_loop_cancel_token = ptimeout.create_cancel_token();
     this._last_devices = [];
     this._refresh_lock = false;
     this._enabled = false;
@@ -30,7 +33,7 @@ class _bluetooth_battery_level_extention extends signals {
         if (!this._enabled) { return; }
         return new Promise((resolve) => {
           logger.log('retry (2s)...')
-          GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, async () => {
+          ptimeout(2000).then(async () => {
             const devices = this._bt_level.get_devices();
             const d = devices.find(d => device.mac === d.mac);
             await this.refresh_device(d);
@@ -79,7 +82,7 @@ class _bluetooth_battery_level_extention extends signals {
     } catch (e) {
       logger.error(e);
     }
-    this._next_loop_handle = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 180, () => {
+    ptimeout(3 * 60 * 1000, this._next_loop_cancel_token).then(() => {
       this.loop();
     });
   }
@@ -89,19 +92,19 @@ class _bluetooth_battery_level_extention extends signals {
 
     this.register_signal(this._bt_level, 'device-inserted', at.wrap((_ctrl, device) => {
       logger.log('got signal "device-inserted" refreshing in 5 seconds');
-      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+      ptimeout(5000).then(() => {
         this.refresh();
       });
     }));
     this.register_signal(this._bt_level, 'device-changed', at.wrap((_ctrl, device) => {
       logger.log('got signal "device-changed" refreshing in 5 seconds');
-      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+      ptimeout(5000).then(() => {
         this.refresh();
       });
     }));
     this.register_signal(this._bt_level, 'device-deleted', at.wrap(() => {
       logger.log('got signal "device-deleted" refreshing in 5 seconds');
-      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+      ptimeout(5000).then(() => {
         this.refresh();
       });
     }));
@@ -116,7 +119,7 @@ class _bluetooth_battery_level_extention extends signals {
     this._register_signals();
     this._bt_level.enable();
     // make sure GnomeBluetooth is ready
-    GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 0, () => {
+    ptimeout().then(() => {
       this.loop()
     });
   }
@@ -125,9 +128,7 @@ class _bluetooth_battery_level_extention extends signals {
     this._enabled = false;
     this._bt_level.disable();
     this._unregister_signals();
-    if (this._next_loop_handle !== null) {
-      GLib.source_remove(this._next_loop_handle);
-    }
+    this._next_loop_cancel_token.cancel();
   }
 }
 
