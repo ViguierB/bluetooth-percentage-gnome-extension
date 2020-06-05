@@ -10,9 +10,14 @@
 #include <bluetooth/rfcomm.h>
 #include <errno.h>
 
-#define BUFFER_SIZE 128
+#ifndef NDEBUG
+# include <stdio.h>
+#endif
 
-#define _ble_send(ble, hdv_data) send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
+#define BUFFER_SIZE 128
+#define BLE_END_LINE "\r\n\r\nOK"
+
+#define _ble_send(ble, hdv_data) __internal_ble_send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
 
 typedef int socket_t;
 typedef struct sockaddr_rc sockaddr_rc_t;
@@ -28,6 +33,19 @@ typedef struct ble_s {
   char*           ble_error_message;
   char            buffer[BUFFER_SIZE + 1]; // need one extra char in some cases
 } ble_t;
+
+#ifndef NDEBUG
+
+ssize_t __internal_ble_send(int __fd, const void *__buf, size_t __n, int __flags) {
+  fprintf(stderr, "[TO DEVICE] %.*s\n", (int)__n, (char*)__buf);
+  return send(__fd, __buf, __n, __flags);
+}
+
+#else
+
+#define __internal_ble_send send
+
+#endif
 
 static char* _ble_strstr(const ble_t* ble, const char* find, size_t slen)
 {
@@ -100,15 +118,19 @@ int   ble_get_battery_level(ble_t* ble) {
     ssize_t recv_len = 0;
 
     while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
+#     ifndef NDEBUG
+      fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
+#     endif
       if (_ble_strstr(ble, "BRSF", recv_len)) {
-        _ble_send(ble, "+BRSF:20");
-        _ble_send(ble, "OK");
+        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
       } else if(_ble_strstr(ble, "CIND=", recv_len)) {
-        _ble_send(ble, "+CIND: (\"battchg\",(0-5))");
-        _ble_send(ble, "OK");
+        _ble_send(ble, "+CIND: (\"battchg\",(0-5))"BLE_END_LINE);
       } else if (_ble_strstr(ble, "CIND?", recv_len)) {
-        _ble_send(ble, "+CIND: 5");
-        _ble_send(ble, "OK");
+        _ble_send(ble, "+CIND: 5"BLE_END_LINE);
+      } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
+        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
+      } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
+        _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
       } else if (_ble_strstr(ble, "IPHONEACCEV", recv_len)) {
         if (!_ble_strstr(ble, ",", recv_len)) { continue; }
         ble->buffer[recv_len] = '\0';

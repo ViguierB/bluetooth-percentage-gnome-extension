@@ -1,0 +1,72 @@
+bash $> battery_level_engine CC:98:8B:1F:F6:49 10
+
+stderr:
+[FROM DEVICE] AT+BRSF=665
+[TO DEVICE] 
++BRSF:20
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CIND=?
+[TO DEVICE] 
++CIND: ("battchg",(0-5))
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CIND?
+[TO DEVICE] 
++CIND: 5
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CMER=3, 0, 0, 1
+[TO DEVICE] 
+OK
+
+Device not compatible
+
+
+
+bash $> battery_level_engine CC:98:8B:1F:F6:49 10
+
+stderr:
+[FROM DEVICE] AT+BRSF=665
+[TO DEVICE] 
++BRSF:20
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CIND=?
+[TO DEVICE] 
++CIND: ("battchg",(0-5))
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CIND?
+[TO DEVICE] 
++CIND: 5
+
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+CMER=3, 0, 0, 1
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+XAPL=054C-0C68-0420,10
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+APLSIRI?
+[TO DEVICE] 
+OK
+
+[FROM DEVICE] AT+IPHONEACCEV=1,1,4
+
+stdout:
+50
