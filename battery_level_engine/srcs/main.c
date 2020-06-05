@@ -20,7 +20,7 @@ int main(int ac, char **av) {
   void*     bl_engine;
 
   if (*channel_str_error_handle != '\0') {
-    fprintf(stderr, "Bad given channel\n");
+    fprintf(stderr, "bad given channel\n");
     return EXIT_FAILURE;
   }
 
@@ -32,7 +32,7 @@ int main(int ac, char **av) {
   }
 
   if (ble_connect_to(bl_engine, address, channel) < 0) {
-    fprintf(stderr, "unable to connect to this bleutooth device: %s\n", ble_get_last_error_message(bl_engine));
+    fprintf(stderr, "unable to connect to this bluetooth device: %s\n", ble_get_last_error_message(bl_engine));
     return EXIT_FAILURE;
   }
 
@@ -43,7 +43,8 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
-  printf("%d\n", level);
+  printf("%d", level);
+  fflush(stdout);
 
   delete_battery_level_engine(bl_engine);
 
