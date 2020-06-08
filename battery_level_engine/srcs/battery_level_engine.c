@@ -129,7 +129,7 @@ static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* dat
 
   if (!ble->ready) {
     ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
-    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
     return;
   }
 
@@ -160,7 +160,7 @@ static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* dat
               int   value = atoi(commands[i + 1]);
 
               free_split(commands);
-              return ((ble_on_level_change_handler)ble->event_handlers[BLE_BATTERY_LEVEL])(ble, (value + 1) * 10);
+              return ((ble_on_level_change_handler_t)ble->event_handlers[BLE_BATTERY_LEVEL])(ble, (value + 1) * 10);
             }
           }
           free_split(commands);
@@ -171,10 +171,10 @@ static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* dat
     }
 
     ble->ble_error_message = "Device not compatible";
-    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
   } else {
     ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
-    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
   }
 }
 

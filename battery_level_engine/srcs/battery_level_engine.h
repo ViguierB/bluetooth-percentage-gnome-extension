@@ -42,8 +42,8 @@ void          free_split(char** sstr);
 # define BLE void
 #endif
 
-typedef void  (*ble_on_level_change_handler)(BLE*, int level);
-typedef void  (*ble_on_error_handler)(BLE*, char *error);
+typedef void  (*ble_on_level_change_handler_t)(BLE*, int level);
+typedef void  (*ble_on_error_handler_t)(BLE*, char *error);
 
 BLE*        create_battery_level_engine(io_context_t*);
 int         delete_battery_level_engine(BLE*);
