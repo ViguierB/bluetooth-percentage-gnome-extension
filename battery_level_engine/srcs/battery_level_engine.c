@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <sys/epoll.h>
 
 #define _BLE_INTERNAL_
 #include "./battery_level_engine.h"
@@ -35,16 +36,21 @@ ssize_t __internal_ble_send(int __fd, const void *__buf, size_t __n, int __flags
 #endif
 
 
-ble_t* create_battery_level_engine() {
+ble_t* create_battery_level_engine(io_context_t* ctx) {
   ble_t* ble = calloc(1, sizeof(ble_t));
 
   if (!ble) {
     ble->ble_error_message = strerror(errno);
   }
+  ble->ctx = ctx;
   return ble;
 }
 
 int   delete_battery_level_engine(ble_t* ble) {
+  if (!!ble->ioc_sock_handle) {
+    ioc_remove_fd(ble->ctx, ble->ioc_sock_handle);
+  }
+  
   if (ble->is_connected) {
     if (close(ble->sock) < 0) {
       ble->ble_error_message = strerror(errno);
@@ -117,69 +123,16 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
   }
 }
 
-int ble_connect_to(ble_t* ble, char* addr) {
-  if (ble->channel == 0) {
-    ble->ble_error_message = "No channel found, please run 'ble_find_rfcomm_channel()' before";
-  }
+static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* data) {
+  (void)event;
+  ble_t*  ble = data->data;
 
-  ble->sock = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
-
-  if (ble->sock < 0) {
-    ble->ble_error_message = strerror(errno);
-    return -1;
-  }
-  ble->rem_addr.rc_family = AF_BLUETOOTH;
-  ble->rem_addr.rc_channel = (uint8_t) ble->channel;
-  str2ba(addr, &ble->rem_addr.rc_bdaddr);
-
-  int connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
-
-  if (connect_res < 0) {
-    ble->ble_error_message = strerror(errno);
-    return connect_res;
-  }
-  ble->is_connected = 1;
-  return 0;
-}
-
-
-int ble_hfp_nogiciate(ble_t* ble) {
-  if (ble->is_connected) {
-    ssize_t recv_len = 0;
-
-    while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
-#     ifndef NDEBUG
-        fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
-#     endif
-      if (_ble_strstr(ble, "BRSF", recv_len)) {
-        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
-      } else if(_ble_strstr(ble, "CIND=", recv_len)) {
-        _ble_send(ble, "+CIND: (\"battchg\",(0-5))"BLE_END_LINE);
-      } else if (_ble_strstr(ble, "CIND?", recv_len)) {
-        _ble_send(ble, "+CIND: 5"BLE_END_LINE);
-      } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
-        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
-      } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
-        _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
-        return 0;
-      } else {
-        _ble_send(ble, "OK");
-      }
-    }
-
-    ble->ble_error_message = "Device not compatible";
-    return -1;
-  } else {
-    ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
-    return -1;
-  }
-}
-
-int ble_get_battery_level(ble_t* ble) {
-  if (ble->ready) {
+  if (!ble->ready) {
     ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
-    return -1;
+    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    return;
   }
+
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
@@ -207,11 +160,77 @@ int ble_get_battery_level(ble_t* ble) {
               int   value = atoi(commands[i + 1]);
 
               free_split(commands);
-              return (value + 1) * 10;
+              return ((ble_on_level_change_handler)ble->event_handlers[BLE_BATTERY_LEVEL])(ble, (value + 1) * 10);
             }
           }
           free_split(commands);
         }
+      } else {
+        _ble_send(ble, "OK");
+      }
+    }
+
+    ble->ble_error_message = "Device not compatible";
+    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+  } else {
+    ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
+    ((ble_on_error_handler)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+  }
+}
+
+void  ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_handler) {
+  ble->event_handlers[e] = event_handler;
+}
+
+int ble_connect_to(ble_t* ble, char* addr) {
+  if (ble->channel == 0) {
+    ble->ble_error_message = "No channel found, please run 'ble_find_rfcomm_channel()' before";
+  }
+
+  ble->sock = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+
+  if (ble->sock < 0) {
+    ble->ble_error_message = strerror(errno);
+    return -1;
+  }
+  ble->rem_addr.rc_family = AF_BLUETOOTH;
+  ble->rem_addr.rc_channel = (uint8_t) ble->channel;
+  str2ba(addr, &ble->rem_addr.rc_bdaddr);
+
+  int connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
+
+  if (connect_res < 0) {
+    ble->ble_error_message = strerror(errno);
+    return connect_res;
+  }
+
+  ble->ioc_sock_handle = ioc_add_fd(ble->ctx, ble->sock, EPOLLIN | EPOLLOUT, &_ble_on_socket_data_is_pending, ble);
+
+  ble->is_connected = 1;
+  return 0;
+}
+
+
+int ble_hfp_nogiciate(ble_t* ble) {
+  if (ble->is_connected) {
+    ssize_t recv_len = 0;
+
+    while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
+#     ifndef NDEBUG
+        fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
+#     endif
+      if (_ble_strstr(ble, "BRSF", recv_len)) {
+        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
+      } else if(_ble_strstr(ble, "CIND=", recv_len)) {
+        _ble_send(ble, "+CIND: (\"battchg\",(0-5))"BLE_END_LINE);
+      } else if (_ble_strstr(ble, "CIND?", recv_len)) {
+        _ble_send(ble, "+CIND: 5"BLE_END_LINE);
+      } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
+        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
+      } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
+        _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
+        ble->ready = 1;
+        return 0;
       } else {
         _ble_send(ble, "OK");
       }

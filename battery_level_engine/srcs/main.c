@@ -1,8 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <stdint.h>
+#include <string.h>
 
+#include "./io_context.h"
 #include "./battery_level_engine.h"
+
+static void on_battery_level_change(void* ble, int level);
+static void on_ble_error(void* ble, char* error_string);
+static void on_stdin_data_pending(uint32_t events, ioc_data_wrap_t* data);
 
 int main(int ac, char **av) {
   if (ac != 2 ) {
@@ -10,21 +17,29 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
-  char*     address = av[1];
-  void*     bl_engine;
+  char*         address = av[1];
+  io_context_t* ctx;
+  void*         bl_engine;
+  int           stop = 0;
 
+  if (!(ctx = create_io_context())) {
+    fprintf(stderr, "create_io_context() failed\n");
+    return EXIT_FAILURE;
+  }
 
-  bl_engine = create_battery_level_engine();
-  
-  if (!bl_engine) {
+  if (!(bl_engine = create_battery_level_engine(ctx))) {
     fprintf(stderr, "create_battery_level_engine() failed\n");
     return EXIT_FAILURE;
   }
+
+  ble_register_event_handler(bl_engine, BLE_BATTERY_LEVEL, &on_battery_level_change);
+  ble_register_event_handler(bl_engine, BLE_ERROR, &on_ble_error);
 
   if (ble_find_rfcomm_channel(bl_engine, address) != 0) {
     fprintf(stderr, "Failed to connect to SDP server on %s: %s\n", address, ble_get_last_error_message(bl_engine));
     return EXIT_FAILURE;
   }
+
 
   if (ble_connect_to(bl_engine, address) < 0) {
     fprintf(stderr, "unable to connect to this bluetooth device: %s\n", ble_get_last_error_message(bl_engine));
@@ -36,20 +51,58 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
-  int level;
-  
-  while ((level = ble_get_battery_level(bl_engine)) >= 0) {
-    if (level == -1) {
-      fprintf(stderr, "%s\n", ble_get_last_error_message(bl_engine));
-      return EXIT_FAILURE;
-    }
+  ioc_handle_t stdin_handle = ioc_add_fd(ctx, STDIN_FILENO, 0, on_stdin_data_pending, &stop);
 
-    printf("%d\n", level);
-    fflush(stdout);
+  while (ioc_wait_once(ctx) == 0) {
+    if (!!stop) {
+      break;
+    }
   }
 
+  // int level;
+  
+  // while ((level = ble_get_battery_level(bl_engine)) >= 0) {
+  //   if (level == -1) {
+  //     fprintf(stderr, "%s\n", ble_get_last_error_message(bl_engine));
+  //     return EXIT_FAILURE;
+  //   }
 
+  //   printf("%d\n", level);
+  //   fflush(stdout);
+  // }
+
+  ioc_remove_fd(ctx, stdin_handle);
   delete_battery_level_engine(bl_engine);
+  delete_io_context(ctx);
 
   return EXIT_SUCCESS;
+}
+
+static void on_battery_level_change(void* ble, int level) {
+  (void)ble;
+  printf("%d\n", level);
+  fflush(stdout);
+}
+
+static void on_ble_error(void* ble, char* error_string) {
+  (void)ble;
+  fprintf(stderr, "%s\n", error_string);
+  exit(EXIT_FAILURE);
+}
+
+static void on_stdin_data_pending(uint32_t event, ioc_data_wrap_t* data) {
+  (void)event;
+  char buffer[1024];
+
+  ssize_t len = read(data->fd, buffer, 1024);
+  
+  if (buffer[len-1] == '\n') {
+    --len;
+  }
+
+  buffer[len] = 0;
+
+  if (strcmp(buffer, "stop") == 0) {
+    *((int*)data->data) = 1;
+  }
 }
