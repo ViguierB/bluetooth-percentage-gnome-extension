@@ -36,8 +36,8 @@ ODIR	=	objs
 
 SDIR	=	srcs
 
-SRC	 = main.c \
-				split.c \
+SRC	 =	main.c \
+				misc.c \
 				battery_level_engine.c
 
 LFLAGS	=	-lbluetooth

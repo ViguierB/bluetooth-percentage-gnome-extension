@@ -1,6 +1,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define _BLE_INTERNAL_
+#include "battery_level_engine.h"
+
 static int  count_lines(char *inp, char sep, char **tmp)
 {
   int count;
@@ -57,4 +60,25 @@ char  **split(char *inp, char sep, int *nb_lines)
 void  free_split(char** sstr) {
   free(*sstr);
   free(sstr);
+}
+
+char* _ble_strstr(const ble_t* ble, const char* find, size_t slen)
+{
+  char        c, sc;
+  const char* s = ble->buffer;
+  size_t      len;
+
+  if ((c = *find++) != '\0') {
+    len = strlen(find);
+    do {
+      do {
+        if (slen-- < 1 || (sc = *s++) == '\0')
+          return (NULL);
+      } while (sc != c);
+      if (len > slen)
+        return (NULL);
+    } while (strncmp(s, find, len) != 0);
+    s--;
+  }
+  return ((char *)s);
 }
