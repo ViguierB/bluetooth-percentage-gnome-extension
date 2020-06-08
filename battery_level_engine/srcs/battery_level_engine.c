@@ -144,7 +144,6 @@ static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* dat
         _ble_send(ble, "OK");
         if (!_ble_strstr(ble, ",", recv_len)) { continue; }
         ble->buffer[recv_len] = '\0';
-        /* https://developer.apple.com/accessories/Accessory-Design-Guidelines.pdf */
         
         int n;
         char* iphoneaccev_values = strchr(ble->buffer, '=');
@@ -220,13 +219,13 @@ int ble_hfp_nogiciate(ble_t* ble) {
         fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
 #     endif
       if (_ble_strstr(ble, "BRSF", recv_len)) {
-        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
+        _ble_send(ble, "+BRSF:511"BLE_END_LINE);
       } else if(_ble_strstr(ble, "CIND=", recv_len)) {
-        _ble_send(ble, "+CIND: (\"battchg\",(0-5))"BLE_END_LINE);
+        _ble_send(ble, "+CIND: (\"battchg\",(0-5)),(\"signal\",(0-5))(\"service\",(0,1)),(\"call\",(0,1)),(\"callsetup\",(0-3)),(\"callheld\",(0-2)),(\"roam\",(0,1))"BLE_END_LINE);
       } else if (_ble_strstr(ble, "CIND?", recv_len)) {
-        _ble_send(ble, "+CIND: 5"BLE_END_LINE);
+        _ble_send(ble, "+CIND: 5,5,1,0,0,0,0"BLE_END_LINE);
       } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
-        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
+        _ble_send(ble, "+XAPL=iPhone,7"BLE_END_LINE); // lel
       } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
         _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
         ble->ready = 1;
@@ -244,6 +243,35 @@ int ble_hfp_nogiciate(ble_t* ble) {
   }
 }
 
-const char* ble_get_last_error_message(ble_t *ble) {
+int ble_send_command(ble_t* ble, const char* cmd) {
+  if (!ble->is_connected) {
+    ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
+    return -1;
+  }
+  if (!ble->ready) {
+    ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
+    return -1;
+  }
+
+  size_t  cmd_len = strlen(cmd);
+  char*   str = malloc(cmd_len + sizeof(BLE_END_LINE) + 4);
+
+  if (!str) {
+    ble->ble_error_message = "Out of memory";
+    return -1;
+  }
+
+  str[0] = '\r';
+  str[1] = '\n';
+  memcpy(str + 2, cmd, cmd_len);
+  memcpy(str + 2 + cmd_len, "\r\n\r\nOK\r\n", sizeof("\r\n\r\nOK\r\n"));
+
+  __internal_ble_send(ble->sock, str, cmd_len + sizeof(BLE_END_LINE) + 4, 0);
+
+  free(str);
+  return 0;
+}
+
+const char* ble_get_last_error_message(ble_t* ble) {
   return ble->ble_error_message;
 }

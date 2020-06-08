@@ -22,7 +22,7 @@ endif
 
 ifeq	($(RELEASE),true)
  CFLAGS	+=	$(OPTI_FLAG)
- CFLAGS	+=	-Werror
+ CFLAGS	+=	-Werror -DNDEBUG
  DEBUG	=	false
 else
  CFLAGS	+=	-O0

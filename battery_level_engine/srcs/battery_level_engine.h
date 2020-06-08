@@ -53,5 +53,6 @@ int         ble_connect_to(BLE*, char* addr);
 int         ble_get_battery_level(BLE*);
 const char* ble_get_last_error_message(BLE*);
 int         ble_hfp_nogiciate(BLE*);
+int         ble_send_command(BLE*, const char* cmd);
 
 #endif // _BLE_H_
