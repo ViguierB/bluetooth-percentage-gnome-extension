@@ -10,10 +10,6 @@ ifndef	RELEASE
 	RELEASE =	false
 endif
 
-ALLOW_LSEEK =	true
-
-ALLOW_OPEN	=	true
-
 OPTI_FLAG	 =	-O2
 
 ifeq	($(WALL),true)
