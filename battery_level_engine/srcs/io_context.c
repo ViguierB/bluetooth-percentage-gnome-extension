@@ -81,6 +81,9 @@ int  ioc_wait_once(io_context_t* ioc) {
       elapsed = ((double)clock() - start) / CLOCKS_PER_SEC * 1000;
       do {
         cur->value.timeout -= d_ev_timeout + elapsed;
+        if (cur->value.timeout < 0) {
+          cur->value.timeout = 0;
+        }
         cur = cur->next;
       } while (cur != first);
     }

@@ -57,7 +57,7 @@ ble_t* create_battery_level_engine(io_context_t* ctx) {
 
 int   delete_battery_level_engine(ble_t* ble) {
   if (!!ble->ioc_sock_handle) {
-    ioc_remove_fd(ble->ctx, ble->ioc_sock_handle);
+    ioc_remove_handle(ble->ctx, ble->ioc_sock_handle);
   }
   
   if (ble->is_connected) {

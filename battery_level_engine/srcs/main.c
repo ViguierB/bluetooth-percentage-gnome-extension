@@ -8,9 +8,10 @@
 #include "./battery_level_engine.h"
 
 struct ctx_data {
-  void* ble;
-  int   stop;
-  char  buffer[1024];
+  void*         ble;
+  io_context_t* ctx;
+  int           stop;
+  char          buffer[1024];
 };
 
 static void on_battery_level_change(void* ble, int level);
@@ -58,6 +59,7 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
+  d.ctx = ctx;
   d.ble = bl_engine;
   ioc_add_fd(ctx, STDIN_FILENO, 0, (ioc_event_func_t)&on_stdin_data_pending, &d);
 
@@ -90,6 +92,35 @@ static void on_ble_error(void* ble, char* error_string) {
   exit(EXIT_FAILURE);
 }
 
+struct exec_options {
+  char*             cmd;
+  struct ctx_data*  data;
+};
+
+void  free_exec_options(struct exec_options* opts) {
+  free(opts->cmd);
+  free(opts);
+}
+
+static inline void exec_command(struct exec_options* opt) {
+  if (strstr(opt->cmd, "cmd") == opt->cmd) {
+    ble_send_command(opt->data->ble, opt->cmd + sizeof("cmd"));
+  } else if (strstr(opt->cmd, "timeout") == opt->cmd) {
+    struct exec_options*  o = malloc(sizeof(struct exec_options));
+    char                  str[1024];
+    int                   timeout;
+
+    sscanf(opt->cmd + sizeof("timeout"), "%d %24[^\n]", &timeout, str);
+
+    o->cmd = strdup(str);
+    o->data = opt->data;
+    ioc_handle_t h = ioc_timeout(opt->data->ctx, timeout * 1000, (ioc_timeout_func_t)&exec_command, o);
+    ioc_set_handle_delete_func(h, (ioc_data_free_func_t)&free_exec_options);
+  } else if (strcmp(opt->cmd, "stop") == 0) {
+    opt->data->stop = 1;
+  }
+}
+
 static void on_stdin_data_pending(int fd, uint32_t event, struct ctx_data* data) {
   (void)event;
   char* buffer = data->buffer;
@@ -102,9 +133,10 @@ static void on_stdin_data_pending(int fd, uint32_t event, struct ctx_data* data)
 
   buffer[len] = 0;
 
-  if (strstr(buffer, "cmd") == buffer) {
-    ble_send_command(data->ble, buffer + sizeof("cmd"));
-  } else if (strcmp(buffer, "stop") == 0) {
-    data->stop = 1;
-  }
+  struct exec_options o = {
+    .cmd = buffer,
+    .data = data
+  };
+
+  exec_command(&o);
 }
