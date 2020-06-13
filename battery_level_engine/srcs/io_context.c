@@ -4,9 +4,13 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 
+#include "./circular_double_linked_list.h"
 #define IOC_MAX_EVENTS 10
 #define IOC_INTERNAL
 #include "./io_context.h"
+
+typedef struct ioc_event_data_s ioc_event_data_t;
+DECLARE_CIRCULAR_DOUBLE_LINKED_LIST(ioc_event_data_t)
 
 #define OFFSET_OF(ptype, memb) ((uintptr_t)&(((ptype*)0)->memb))
 
@@ -20,6 +24,19 @@ io_context_t* create_io_context() {
 }
 
 void  delete_io_context(io_context_t* ioc) {
+  ioc_event_data_t* first, *cur;
+
+  first = cur = ioc->event_data_list;
+  if (!!first) {
+    do {
+      void* free_later = cur;
+      if (!!cur->free_data_func) {
+        cur->free_data_func(cur->data);
+      }
+      cur = cur->next;
+      free(free_later);
+    } while (cur != first);
+  }
   close(ioc->epoll_fd);
   free(ioc);
 }
@@ -36,7 +53,7 @@ int  ioc_wait_once(io_context_t* ioc) {
   for (int i = 0; i < nfds; ++i) {
       struct ioc_event_data_s* d_event = ioc->events[i].data.ptr;
       
-      d_event->func(ioc->events[i].events, &d_event->data_wrap);
+      d_event->func(d_event->fd, ioc->events[i].events, d_event->data);
   }
   return 0;
 }
@@ -50,13 +67,18 @@ ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_fu
     return NULL;
   }
 
-  // d_event->prev = NULL;
-  // d_event->next = NULL;
+  d_event->prev = d_event; //important (requested by the linked list)
+  d_event->next = d_event; //important (requested by the linked list)
   d_event->func = handler;
-  d_event->fd = fd; // end user -> read only
+  d_event->fd = fd; // end user -> hidden
   d_event->free_data_func = NULL;
-  d_event->data_wrap.data = data;
-  d_event->data_wrap.fd = fd;  // end user -> ! read only
+  d_event->data = data;
+
+  if (ioc->event_data_list) {
+    list_ioc_event_data_t_add_to(ioc->event_data_list, d_event);
+  } else {
+    ioc->event_data_list = d_event;
+  }
 
   ev.events = events || EPOLLIN;
   ev.data.ptr = d_event;
@@ -68,10 +90,14 @@ ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_fu
   return (void*)d_event;
 }
 
-ioc_handle_t ioc_get_handle(ioc_data_wrap_t* data) {
-  const uintptr_t wrap_offset = OFFSET_OF(struct ioc_event_data_s, data_wrap);
+// ioc_handle_t  ioc_timeout(io_context_t* ioc, ioc_event_func_t handler, ioc_data_t data) {
 
-  return (void*)((uintptr_t)data - wrap_offset);
+// }
+
+ioc_handle_t ioc_get_handle(ioc_data_t* data) {
+  const uintptr_t data_offset = OFFSET_OF(struct ioc_event_data_s, data);
+
+  return (void*)((uintptr_t)data - data_offset);
 }
 
 int ioc_remove_fd(io_context_t* ioc, ioc_handle_t handle) {
@@ -82,8 +108,9 @@ int ioc_remove_fd(io_context_t* ioc, ioc_handle_t handle) {
     return -1;
   }
   if (!!d_event->free_data_func) {
-    d_event->free_data_func(d_event->data_wrap.data);
+    d_event->free_data_func(d_event->data);
   }
+  ioc->event_data_list = list_ioc_event_data_t_remove(d_event);
   free(d_event);
   return 0;
 }

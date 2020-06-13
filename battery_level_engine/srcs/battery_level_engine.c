@@ -21,17 +21,26 @@
 #define BLE_END_LINE "\r\n\r\nOK"
 
 #define _ble_send(ble, hdv_data) __internal_ble_send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
+#define _ble_recv(ble, hdv_data) __internal_ble_recv(ble->sock, hdv_data, BUFFER_SIZE, 0)
 
 #ifndef NDEBUG
 
 ssize_t __internal_ble_send(int __fd, const void *__buf, size_t __n, int __flags) {
-  fprintf(stderr, "[TO DEVICE] %.*s\n", (int)__n, (char*)__buf);
+  fprintf(stderr, "[  TO DEVICE] %.*s\n", (int)__n, (char*)__buf);
   return send(__fd, __buf, __n, __flags);
+}
+
+ssize_t __internal_ble_recv(int __fd, void *__buf, size_t __n, int __flags) {
+  ssize_t len = recv(__fd, __buf, __n, __flags);
+
+  fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)len, (char*)__buf);
+  return len;
 }
 
 #else
 
 #define __internal_ble_send send
+#define __internal_ble_recv recv
 
 #endif
 
@@ -123,9 +132,9 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
   }
 }
 
-static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* data) {
+static void  _ble_on_socket_data_is_pending(int fd, uint32_t event, ble_t* ble) {
   (void)event;
-  ble_t*  ble = data->data;
+  (void)fd;
 
   if (!ble->ready) {
     ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
@@ -136,10 +145,7 @@ static void  _ble_on_socket_data_is_pending(uint32_t event, ioc_data_wrap_t* dat
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
-    while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
-#     ifndef NDEBUG
-        fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
-#     endif
+    while ((recv_len = _ble_recv(ble, ble->buffer)) >= 0) {
       if (_ble_strstr(ble, "IPHONEACCEV", recv_len)) {
         _ble_send(ble, "OK");
         if (!_ble_strstr(ble, ",", recv_len)) { continue; }
@@ -203,7 +209,7 @@ int ble_connect_to(ble_t* ble, char* addr) {
     return connect_res;
   }
 
-  ble->ioc_sock_handle = ioc_add_fd(ble->ctx, ble->sock, EPOLLIN | EPOLLOUT, &_ble_on_socket_data_is_pending, ble);
+  ble->ioc_sock_handle = ioc_add_fd(ble->ctx, ble->sock, EPOLLIN | EPOLLOUT, (ioc_event_func_t)&_ble_on_socket_data_is_pending, ble);
 
   ble->is_connected = 1;
   return 0;
@@ -214,12 +220,9 @@ int ble_hfp_nogiciate(ble_t* ble) {
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
-    while ((recv_len = recv(ble->sock, ble->buffer, BUFFER_SIZE, 0)) >= 0) {
-#     ifndef NDEBUG
-        fprintf(stderr, "[FROM DEVICE] %.*s\n", (int)recv_len, ble->buffer);
-#     endif
+    while ((recv_len = _ble_recv(ble, ble->buffer)) >= 0) {
       if (_ble_strstr(ble, "BRSF", recv_len)) {
-        _ble_send(ble, "+BRSF:511"BLE_END_LINE);
+        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
       } else if(_ble_strstr(ble, "CIND=", recv_len)) {
         _ble_send(ble, "+CIND: (\"battchg\",(0-5)),(\"signal\",(0-5))(\"service\",(0,1)),(\"call\",(0,1)),(\"callsetup\",(0-3)),(\"callheld\",(0-2)),(\"roam\",(0,1))"BLE_END_LINE);
       } else if (_ble_strstr(ble, "CIND?", recv_len)) {

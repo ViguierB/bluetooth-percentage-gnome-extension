@@ -1,0 +1,1 @@
+gcc -o test_io_context -O0 -ggdb -Wall ../srcs/io_context.c ./io_context_tests.c
