@@ -11,11 +11,11 @@
     last_next->prev = item;                             \
     return source;                                      \
   }                                                     \
-  static inline T*  list_ ## T ## _remove(T* item) {             \
-    T* prev = item->prev;                               \
+  static inline T*  list_ ## T ## _remove(T* item) {    \
+    T* next = item->next;                               \
     item->prev->next = item->next;                      \
     item->next->prev = item->prev;                      \
-    return prev == item ? NULL : prev;                  \
+    return next == item ? NULL : next;                  \
   }
 
 #endif // CIRCULAR_DOUBLE_LINKED_LIST_H
