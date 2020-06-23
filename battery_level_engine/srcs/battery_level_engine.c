@@ -57,7 +57,7 @@ ble_t* create_battery_level_engine(io_context_t* ctx) {
 
 int   delete_battery_level_engine(ble_t* ble) {
   if (!!ble->ioc_sock_handle) {
-    ioc_remove_handle(ble->ctx, ble->ioc_sock_handle);
+    ioc_remove_handle(ble->ioc_sock_handle);
   }
   
   if (ble->is_connected) {
@@ -228,7 +228,7 @@ int ble_hfp_nogiciate(ble_t* ble) {
       } else if (_ble_strstr(ble, "CIND?", recv_len)) {
         _ble_send(ble, "+CIND: 5,5,1,0,0,0,0"BLE_END_LINE);
       } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
-        _ble_send(ble, "+XAPL=iPhone,7"BLE_END_LINE); // lel
+        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
       } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
         _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
         ble->ready = 1;

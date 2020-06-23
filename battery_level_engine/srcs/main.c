@@ -110,7 +110,7 @@ static inline void exec_command(struct exec_options* opt) {
     char                  str[1024];
     int                   timeout;
 
-    sscanf(opt->cmd + sizeof("timeout"), "%d %24[^\n]", &timeout, str);
+    sscanf(opt->cmd + sizeof("timeout"), "%d %1024[^\n]", &timeout, str);
 
     o->cmd = strdup(str);
     o->data = opt->data;

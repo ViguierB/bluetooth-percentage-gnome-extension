@@ -4,9 +4,49 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/epoll.h>
+#include <stdbool.h>
 
 #include "./circular_double_linked_list.h"
+#include "./io_context_def.h"
+
 #define IOC_MAX_EVENTS 10
+
+enum ioc_type {
+  IOC_TYPE_EVENT,
+  IOC_TYPE_TIMEOUT
+};
+
+struct ioc_event_data_s {
+  struct ioc_event_data_s*  prev;
+  struct ioc_event_data_s*  next;
+  enum ioc_type             type;
+  void*                     context;
+  union {
+    ioc_event_func_t          fd_func;
+    ioc_timeout_func_t        timeout_func;
+  }                         func;
+  union {
+    int                       fd;
+    struct {
+      int                       val;
+      bool                      care_later;
+    }                         timeout;
+  }                         value;
+  ioc_data_free_func_t      free_data_func;
+  ioc_data_t                data;
+};
+
+typedef struct io_context_s {
+
+  int                       epoll_fd;
+  struct epoll_event        events[IOC_MAX_EVENTS];
+  char*                     last_error_str;
+  struct ioc_event_data_s*  event_data_list;
+  struct ioc_event_data_s*  timeout_data_list;
+  bool                      is_runnning;
+
+} io_context_t;
+
 #define IOC_INTERNAL
 #include "./io_context.h"
 
@@ -47,22 +87,47 @@ void  delete_io_context(io_context_t* ioc) {
   free(ioc);
 }
 
+static inline uint64_t  __timespec_to_ms(struct timespec *a) {
+  return ((((uint64_t) a->tv_sec * 10000) + (a->tv_nsec / 100000)) / 10);
+}
+
+static inline uint64_t  __now(void) {
+  struct timespec now;
+
+  clock_gettime(
+#   if defined(CLOCK_BOOTTIME)
+      CLOCK_BOOTTIME
+#   elif defined (CLOCK_MONOTNIC)
+      CLOCK_MONOTONIC
+#   else
+#     error "Your os is not compatible with posix time"
+      0
+#   endif
+    , &now);
+
+  return (__timespec_to_ms(&now));
+}
+
+
+
 int  ioc_wait_once(io_context_t* ioc) {
-  int nfds;
-  int timeout = -1;
+  int       nfds;
+  int       timeout = -1;
+  uint64_t  start = __now();
+
+  ioc->is_runnning = true;
 
   if (!!ioc->timeout_data_list) {
-    timeout = ioc->timeout_data_list->value.fd;
+    timeout = ioc->timeout_data_list->value.timeout.val;
   }
 
   nfds = epoll_wait(ioc->epoll_fd, ioc->events, IOC_MAX_EVENTS, timeout);
   if (nfds == -1) {
     ioc->last_error_str = strerror(errno);
+    ioc->is_runnning = false;
     return -1;
   } else if (nfds == 0) {
-    clock_t                   start = clock();
     struct ioc_event_data_s*  d_event = ioc->timeout_data_list;
-    int                       d_ev_timeout = d_event->value.timeout;
 
     ioc->timeout_data_list = list_ioc_event_data_t_remove(d_event);
     d_event->func.timeout_func(d_event->data);
@@ -71,32 +136,39 @@ int  ioc_wait_once(io_context_t* ioc) {
     }
     free(d_event);
 
-    if (ioc->timeout_data_list) {
-
-      struct ioc_event_data_s* first, *cur;
-
-      cur = first = ioc->timeout_data_list;
-
-      long elapsed;
-      elapsed = ((double)clock() - start) / CLOCKS_PER_SEC * 1000;
-      do {
-        cur->value.timeout -= d_ev_timeout + elapsed;
-        if (cur->value.timeout < 0) {
-          cur->value.timeout = 0;
-        }
-        cur = cur->next;
-      } while (cur != first);
-    }
-
-    return 0;
-  }
-
-  for (int i = 0; i < nfds; ++i) {
+  } else {
+    for (int i = 0; i < nfds; ++i) {
       struct ioc_event_data_s* d_event = ioc->events[i].data.ptr;
       
       d_event->func.fd_func(d_event->value.fd, ioc->events[i].events, d_event->data);
+    }
   }
+
+  if (ioc->timeout_data_list) {
+    struct ioc_event_data_s* first, *cur;
+
+    cur = first = ioc->timeout_data_list;
+
+    long elapsed = __now() - start;
+    do {
+      if (cur->value.timeout.care_later != true) {
+        cur->value.timeout.val -= elapsed;
+        if (cur->value.timeout.val < 0) {
+          cur->value.timeout.val = 0;
+        }
+      } else {
+        cur->value.timeout.care_later = false;
+      }
+      cur = cur->next;
+    } while (cur != first);
+  }
+
+  ioc->is_runnning = false;
   return 0;
+}
+
+io_context_t* ioc_get_context_from_handle(ioc_handle_t handle) {
+  return ((ioc_event_data_t*)handle)->context;
 }
 
 ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_func_t handler, ioc_data_t data) {
@@ -111,13 +183,14 @@ ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_fu
   d_event->prev = d_event; //important (requested by the linked list)
   d_event->next = d_event; //important (requested by the linked list)
   d_event->type = IOC_TYPE_EVENT;
+  d_event->context = ioc;
   d_event->func.fd_func = handler;
   d_event->value.fd = fd; // end user -> hidden
   d_event->free_data_func = NULL;
   d_event->data = data;
 
   if (ioc->event_data_list) {
-    list_ioc_event_data_t_add_to(ioc->event_data_list, d_event);
+    list_ioc_event_data_t_add_after(ioc->event_data_list, d_event);
   } else {
     ioc->event_data_list = d_event;
   }
@@ -148,8 +221,10 @@ ioc_handle_t  ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
   d_event->next = d_event;
   d_event->prev = d_event;
   d_event->type = IOC_TYPE_TIMEOUT;
+  d_event->context = ioc;
   d_event->func.timeout_func = handler;
-  d_event->value.timeout = timeout;
+  d_event->value.timeout.val = timeout;
+  d_event->value.timeout.care_later = ioc->is_runnning;
   d_event->data = data;
   d_event->free_data_func = NULL;
 
@@ -160,15 +235,15 @@ ioc_handle_t  ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
     struct ioc_event_data_s*  first = NULL;
 
     first = cur = ioc->timeout_data_list;
-    if (first->value.timeout >= timeout) {
-      list_ioc_event_data_t_add_to(first->prev, d_event);
+    if (first->value.timeout.val >= timeout) {
+      list_ioc_event_data_t_add_before(first, d_event);
       ioc->timeout_data_list = d_event;
-    } else if (timeout >= first->prev->value.timeout) {
-      list_ioc_event_data_t_add_to(first->prev, d_event);
+    } else if (timeout >= first->prev->value.timeout.val) {
+      list_ioc_event_data_t_add_before(first, d_event);
     } else {
       do {
-        if (cur->next->value.timeout >= timeout) {
-          list_ioc_event_data_t_add_to(cur, d_event);
+        if (cur->next->value.timeout.val >= timeout) {
+          list_ioc_event_data_t_add_after(cur, d_event);
           break;
         }
         cur = cur->next;
@@ -184,7 +259,8 @@ ioc_handle_t ioc_get_handle(ioc_data_t* data) {
   return (void*)((uintptr_t)data - data_offset);
 }
 
-int ioc_remove_handle(io_context_t* ioc, ioc_handle_t handle) {
+int ioc_remove_handle(ioc_handle_t handle) {
+  io_context_t*             ioc = ioc_get_context_from_handle(handle);
   struct ioc_event_data_s*  d_event = handle;
 
   if (d_event->type == IOC_TYPE_EVENT && epoll_ctl(ioc->epoll_fd, EPOLL_CTL_DEL, d_event->value.fd, NULL) < 0) {
@@ -194,11 +270,10 @@ int ioc_remove_handle(io_context_t* ioc, ioc_handle_t handle) {
   if (!!d_event->free_data_func) {
     d_event->free_data_func(d_event->data);
   }
-  if (d_event->type == IOC_TYPE_EVENT) {
-    ioc->event_data_list = list_ioc_event_data_t_remove(d_event);
-  } else {
-    ioc->timeout_data_list = list_ioc_event_data_t_remove(d_event);
-  }
+  *((d_event->type == IOC_TYPE_EVENT) 
+    ? &ioc->event_data_list
+    : &ioc->timeout_data_list
+  ) = list_ioc_event_data_t_remove(d_event);
   free(d_event);
   return 0;
 }
