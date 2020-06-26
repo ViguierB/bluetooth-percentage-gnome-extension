@@ -37,14 +37,14 @@ function init() {
 function enable() {
   const date = new Date();
   logger.open({
-    // quiet: true,
-    quiet: false,
+    quiet: true,
+    // quiet: false,
     log_file: `${Me.path}/.logs/${date.getDate()}-${date.getMonth()}-${date.getFullYear()}`
   });
   instance.enable();
 }
 
 function disable() {
-  logger.close();
   instance.disable();
+  logger.close();
 }

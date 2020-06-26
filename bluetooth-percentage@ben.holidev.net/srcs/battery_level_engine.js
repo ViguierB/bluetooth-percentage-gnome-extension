@@ -2,6 +2,7 @@ const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
 const Signals = imports.signals;
 const GnomeBluetooth = imports.gi.GnomeBluetooth;
+const ByteArray = imports.byteArray;
 
 const extensionUtils = imports.misc.extensionUtils;
 const Me = extensionUtils.getCurrentExtension();
@@ -13,27 +14,31 @@ const {
 } = Me.imports.misc;
 
 class _bluetooth_battery_level_engine extends signals {
-  constructor(gnome_bluetooth_client) {
+  constructor() {
     super();
-    this._bt_client = gnome_bluetooth_client;
-    this._bt_model = this._bt_client.get_model();
-    this._bt_devices = [];
   }
 
   enable() {
+    this._bt_client = new GnomeBluetooth.Client();
+    this._bt_model = this._bt_client.get_model();
+    this._bt_devices = [];
+
     this.register_signal(this._bt_model, 'row-changed', (_1, _2, iter) => {
+      // logger.log('got signal "row-changed" from the bluetooth model');
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.update_device(device);
       }
     });
     this.register_signal(this._bt_model, 'row-deleted', (_1, _2, iter) => {
+      // logger.log('got signal "row-deleted" from the bluetooth model');
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.remove_device(device);
       }
     });
     this.register_signal(this._bt_model, 'row-inserted', (_1, _2, iter) => {
+      // logger.log('got signal "row-inserted" from the bluetooth model');
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.add_device(device);
@@ -43,6 +48,7 @@ class _bluetooth_battery_level_engine extends signals {
 
   disable() {
     this.unregister_signal_all();
+    this._bt_devices.forEach(d => d.stop());
   }
 
   remove_device(device) {
@@ -110,37 +116,43 @@ class bluetooth_device {
   }
 
   _start_engine_process() {
-    let [success, pid, in_fd, out_fd, err_fd]  = GLib.spawn_async_with_pipes(null, [`${Me.path}/bin/battery_level_engine`, this.mac], null, 0, null);
+    let [
+      success, pid, in_fd, out_fd, err_fd
+    ]  = GLib.spawn_async_with_pipes(`${Me.path}/bin`, ['./battery_level_engine', this.mac], null, 0, null);
     
     
     if (success) {
       logger.log('engine process started: pid = ' + pid);
       this._pid = pid;
 
-      this.in_writer = new Gio.DataOutputStream({
+      this._in_writer = new Gio.DataOutputStream({
         base_stream: new Gio.UnixOutputStream({ fd: in_fd })
       });
 
-      this.out_reader = new Gio.DataInputStream({
+      this._out_reader = new Gio.DataInputStream({
         base_stream: new Gio.UnixInputStream({ fd: out_fd })
       });
-      this.out_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
+      this._out_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
         let [out, _size] = source_object.read_line_finish(res);
-        let lvl = parseInt(out, 10);
-        if (!Number.isNaN(lvl)) {
-          this.battery_lvl = lvl;
-          this.__battery_lvl_change_handler.success(lvl);
-        } else {
-          this.__battery_lvl_change_handler.error(out);
+        if (!!out) {
+          let lvl = parseInt(ByteArray.toString(out), 10);
+          if (!Number.isNaN(lvl)) {
+            this.battery_lvl = lvl;
+            this.__battery_lvl_change_handler.success(lvl);
+          } else {
+            this.__battery_lvl_change_handler.error(ByteArray.toString(out));
+          }
         }
       });
 
-      this.err_reader = new Gio.DataInputStream({
+      this._err_reader = new Gio.DataInputStream({
         base_stream: new Gio.UnixInputStream({ fd: err_fd })
       });
-      this.err_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
+      this._err_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
         let [out, _size] = source_object.read_line_finish(res);
-        logger.error('something goes wrong with the engine: std::err: ' + out);
+        if (!!out) {
+          logger.error(this.name + ': std::err: ' + ByteArray.toString(out));
+        }
       });
     } else {
       logger.error(new Error('cannot start the engine process :/'));
@@ -169,10 +181,11 @@ class bluetooth_device {
 
   stop() {
     if (this._is_started) {
-      this.in_writer.write('stop', null);
-      this.in_writer.close();
-      this.out_reader.close();
-      this.err_reader.close();
+      this._in_writer.write('stop', null);
+      delete this._in_writer;
+      delete this._out_reader;
+      delete this._err_reader;
+
       this._is_started = false;
     }
   }

@@ -1,7 +1,6 @@
 const Main = imports.ui.main;
 const GLib = imports.gi.GLib;
 const St = imports.gi.St;
-const GnomeBluetooth = imports.gi.GnomeBluetooth;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
 const { bluetooth_battery_level_engine } = Me.imports.srcs.battery_level_engine;
@@ -17,7 +16,7 @@ class _bluetooth_battery_level_extention extends signals {
     super();
     this._bluetooth_indicator = Main.panel.statusArea.aggregateMenu._bluetooth;
     this._menu = this._bluetooth_indicator._item.menu;
-    this._bt_level = new bluetooth_battery_level_engine(new GnomeBluetooth.Client());
+    this._bt_level = new bluetooth_battery_level_engine();
     this._enabled = false;
   }
 
@@ -38,12 +37,14 @@ class _bluetooth_battery_level_extention extends signals {
     this._enabled = true;
     this._register_signals();
     this._bt_level.enable();
+    logger.log('Bluetooth Percentage: Enabled');
   }
 
   disable() {
     this._enabled = false;
     this._bt_level.disable();
     this._unregister_signals();
+    logger.log('Bluetooth Percentage: Disabled');
   }
 }
 
