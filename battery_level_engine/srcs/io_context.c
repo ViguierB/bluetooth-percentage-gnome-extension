@@ -272,7 +272,7 @@ int ioc_remove_handle(ioc_handle_t handle) {
   }
   *((d_event->type == IOC_TYPE_EVENT) 
     ? &ioc->event_data_list
-    : &ioc->timeout_data_list
+    : &ioc->timeout_data_list // TODO: FIX THIS!! it could break the list order
   ) = list_ioc_event_data_t_remove(d_event);
   free(d_event);
   return 0;
