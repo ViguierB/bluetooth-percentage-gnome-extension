@@ -17,22 +17,26 @@ class _bluetooth_battery_level_engine extends signals {
     super();
     this._bt_client = gnome_bluetooth_client;
     this._bt_model = this._bt_client.get_model();
+    this._bt_devices = [];
   }
 
   enable() {
     this.register_signal(this._bt_model, 'row-changed', (_1, _2, iter) => {
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
-        this.emit('device-changed', device);
+        this.update_device(device);
       }
     });
-    this.register_signal(this._bt_model, 'row-deleted', () => {
-      this.emit('device-deleted');
+    this.register_signal(this._bt_model, 'row-deleted', (_1, _2, iter) => {
+      if (iter) {
+        let device = new bluetooth_device(this._bt_model, iter);
+        this.remove_device(device);
+      }
     });
     this.register_signal(this._bt_model, 'row-inserted', (_1, _2, iter) => {
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
-        this.emit('device-inserted', device);
+        this.add_device(device);
       }
     });
   }
@@ -41,76 +45,33 @@ class _bluetooth_battery_level_engine extends signals {
     this.unregister_signal_all();
   }
 
-  async _run_battery_level_command(addr, channel = 10, cancellable = null) {
-    const flags = Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE;
-    const proc = new Gio.Subprocess({
-      argv: [`${Me.path}/bin/battery_level_engine`, addr, channel.toString()],
-      flags: flags
-    });
-
-
-    proc.init(cancellable);
-
-    return new Promise((resolve, reject) => {
-      proc.communicate_utf8_async(null, cancellable, (proc, res) => {
-        try {
-          let [ok, stdout, stderr] = proc.communicate_utf8_finish(res);
-          logger.log({ "engine-output": { ok, stdout, stderr } });
-          resolve({
-            ok,
-            stdout,
-            stderr
-          });
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
-  }
-
-  // from https://github.com/bjarosze/gnome-bluetooth-quick-connect/blob/master/bluetooth.js
-  get_devices() {
-    let adapter = this._get_default_adapter();
-    if (!adapter)
-      return [];
-    let devices = [];
-
-    let [ret, iter] = this._bt_model.iter_children(adapter);
-    while (ret) {
-      devices.push(new bluetooth_device(this._bt_model, iter));
-      ret = this._bt_model.iter_next(iter);
+  remove_device(device) {
+    let device_index = this._bt_devices.findIndex(d => d.mac === device.mac);
+    if (device_index >= 0) {
+      let [ removed ] = this._bt_devices.splice(device_index, 1);
+      removed.delete();
     }
-
-    return devices;
   }
 
-  // from https://github.com/bjarosze/gnome-bluetooth-quick-connect/blob/master/bluetooth.js
-  _get_default_adapter() {
-    let [ret, iter] = this._bt_model.get_iter_first();
-    while (ret) {
-      let is_default = this._bt_model.get_value(iter, GnomeBluetooth.Column.DEFAULT);
-      let is_powered = this._bt_model.get_value(iter, GnomeBluetooth.Column.POWERED);
-      if (is_default && is_powered)
-        return iter;
-      ret = this._bt_model.iter_next(iter);
-    }
-    return null;
-  }
-
-  async get_battery_level(addr, timeout_in_second = 10) {
-    const cancel_token = new Gio.Cancellable();
-    const timeout_cancel_token = ptimeout.create_cancel_token();
-    ptimeout(timeout_in_second * 1000, () => {
-      logger.log('get_battery_level cancelled: timeout (10s)');
-      cancel_token.cancel();
-    });
-    const proc_out = await this._run_battery_level_command(addr, 10, cancel_token);
-    timeout_cancel_token.cancel();
-    if (proc_out.ok) {
-      return Number.parseInt(proc_out.stdout);
+  update_device(device) {
+    let real_device = this._bt_devices.find(bt_device => bt_device.mac === device.mac);
+    if (!!real_device) {
+      real_device.merge(device);
+      real_device.start();
     } else {
-      logger.error(`battery_level_engine: ${proc_out.stderr}`);
-      throw null;
+      logger.error(new Error(`${device.name} (${device.mac}) have nothing to do here!`));
+    }
+  }
+
+  add_device(device) {
+    if (!this._bt_devices.find(bt_device => bt_device.mac === device.mac)) {
+      this._bt_devices.push(device);
+      device.set_battery_change_handler(lvl => {
+        this.emit('battery_level_change', {
+          device, lvl
+        })
+      });
+      device.start();
     }
   }
 
@@ -132,6 +93,93 @@ class bluetooth_device {
     this.is_paired = model.get_value(ll_device, GnomeBluetooth.Column.PAIRED);
     this.mac = model.get_value(ll_device, GnomeBluetooth.Column.ADDRESS);
     this.is_default = model.get_value(ll_device, GnomeBluetooth.Column.DEFAULT);
+    this.battery_lvl = null;
+
+    this._is_started = false;
+    this.__battery_lvl_change_handler = { success: (_lvl) => {}, error: (message) => {
+      logger.error(`out_reader of ${this.name} (${this.mac}) has got an error: ${message}`);
+    }};
+  }
+
+  merge(device) {
+    this.name = device.name; 
+    this.is_connected = device.is_connected; 
+    this.is_paired = device.is_paired; 
+    this.mac = device.mac; 
+    this.is_default = device.is_default; 
+  }
+
+  _start_engine_process() {
+    let [success, pid, in_fd, out_fd, err_fd]  = GLib.spawn_async_with_pipes(null, [`${Me.path}/bin/battery_level_engine`, this.mac], null, 0, null);
+    
+    
+    if (success) {
+      logger.log('engine process started: pid = ' + pid);
+      this._pid = pid;
+
+      this.in_writer = new Gio.DataOutputStream({
+        base_stream: new Gio.UnixOutputStream({ fd: in_fd })
+      });
+
+      this.out_reader = new Gio.DataInputStream({
+        base_stream: new Gio.UnixInputStream({ fd: out_fd })
+      });
+      this.out_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
+        let [out, _size] = source_object.read_line_finish(res);
+        let lvl = parseInt(out, 10);
+        if (!Number.isNaN(lvl)) {
+          this.battery_lvl = lvl;
+          this.__battery_lvl_change_handler.success(lvl);
+        } else {
+          this.__battery_lvl_change_handler.error(out);
+        }
+      });
+
+      this.err_reader = new Gio.DataInputStream({
+        base_stream: new Gio.UnixInputStream({ fd: err_fd })
+      });
+      this.err_reader.read_line_async(GLib.PRIORITY_DEFAULT, null, (source_object, res) => {
+        let [out, _size] = source_object.read_line_finish(res);
+        logger.error('something goes wrong with the engine: std::err: ' + out);
+      });
+    } else {
+      logger.error(new Error('cannot start the engine process :/'));
+    }
+    return success;
+  }
+
+  set_battery_change_handler(success, error) {
+    this.__battery_lvl_change_handler = { 
+      success: success || this.__battery_lvl_change_handler.success,
+      error: error || this.__battery_lvl_change_handler.error
+    };
+  }
+
+  start() {
+    if (this.is_connected === true && this._is_started === false) {
+      logger.log(`device ${this.name} is connected, start process...`);
+      try {
+        this._start_engine_process();
+        this._is_started = true;
+      } catch (e) {
+        logger.error(e);
+      }
+    }
+  }
+
+  stop() {
+    if (this._is_started) {
+      this.in_writer.write('stop', null);
+      this.in_writer.close();
+      this.out_reader.close();
+      this.err_reader.close();
+      this._is_started = false;
+    }
+  }
+
+  delete() {
+    logger.log("idk what to do for now... :'(");
+    stop();
   }
 
 }

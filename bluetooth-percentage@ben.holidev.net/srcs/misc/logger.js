@@ -51,6 +51,12 @@ class _logger {
     return message;
   }
 
+  _get_error_string(e) {
+    const title = `${e.name}: ${message}`
+    const stack = e.stack;
+
+    return title + '\nOccured at: ' + stack;
+  }
 
   _writer_factory(output_channel) {
     return function(message, no_date = false) {
@@ -58,7 +64,7 @@ class _logger {
         output_channel(message);
       }
       if (message instanceof Error) {
-        message = message.toString();
+        message = this._get_error_string(message);
       }
       this.ready().then(() => {
         if (!this._filestream.is_closed()) {
@@ -74,22 +80,25 @@ class _logger {
     return `${date.getDate()}/${date.getMonth()}/${date.getFullYear()} ${date.getHours()}:${date.getMinutes()}:${date.getSeconds()}`;
   }
 
-  _write(output_channel, message, title) {
+  _write(output_channel, messages, title) {
     const w = this._writer_factory(output_channel);
-    if (message instanceof Error) {
-      w(`[${title}]:`);
-      w(message, true);
-    } else {
-      w(`[${title}]: ${this._parse_message(message)}`);
-    }
+
+    messages.forEach(message => {
+      if (message instanceof Error) {
+        w(`[${title}]:`);
+        w(message, true);
+      } else {
+        w(`[${title}]: ${this._parse_message(message)}`);
+      }
+    })
   }
 
-  log(message) {
-    this._write(log, message, '  LOG');
+  log(...messages) {
+    this._write(log, messages, '  LOG');
   }
 
-  error(message) {
-    this._write(error, message, 'ERROR');
+  error(...messages) {
+    this._write(log, messages, 'ERROR');
   }
 
 }

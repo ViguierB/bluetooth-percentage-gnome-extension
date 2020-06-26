@@ -15,6 +15,7 @@ ptimeout().then(async () => {
 
   
   logger.log('pomme de terre');
+  logger.error(new Error("error :'("));
 
   await logger.close();
 
@@ -25,6 +26,7 @@ ptimeout().then(async () => {
 
   
   logger.log('pomme de terre quiet');
+
 
 
 });
