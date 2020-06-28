@@ -25,11 +25,17 @@ class _logger {
     } else {
       this._file.create_readwrite_async(Gio.FileCreateFlags.NONE, 0, null, ready_hdl_factory(this._file.create_readwrite_finish));
     }
+    this._is_open = true;
     this.log("logger ready");
+  }
+
+  is_open() {
+    return !!this._is_open;
   }
 
   async close() {
     return this.ready().then(() => {
+      this._is_open = false;
       this._filestream.close(null);
       delete this._filestream;
     })

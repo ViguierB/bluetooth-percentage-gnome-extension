@@ -123,7 +123,6 @@ class bluetooth_device {
     
     if (success) {
       logger.log('engine process started: pid = ' + pid);
-      this._pid = pid;
 
       this._in_writer = new Gio.DataOutputStream({
         base_stream: new Gio.UnixOutputStream({ fd: in_fd })
@@ -154,6 +153,19 @@ class bluetooth_device {
           logger.error(this.name + ': std::err: ' + ByteArray.toString(out));
         }
       });
+
+      GLib.child_watch_add(GLib.PRIORITY_LOW, pid, (_pid, status) => {
+        logger.log("process exited with code ", + status);
+        delete this._in_writer;
+        delete this._out_reader;
+        delete this._err_reader;
+  
+        this._is_started = false;
+
+        if (status !== 0) {
+          
+        }
+      })
     } else {
       logger.error(new Error('cannot start the engine process :/'));
     }
@@ -182,11 +194,6 @@ class bluetooth_device {
   stop() {
     if (this._is_started) {
       this._in_writer.write('stop', null);
-      delete this._in_writer;
-      delete this._out_reader;
-      delete this._err_reader;
-
-      this._is_started = false;
     }
   }
 
