@@ -25,6 +25,7 @@ class _bluetooth_battery_level_engine extends signals {
 
     this.register_signal(this._bt_model, 'row-changed', (_1, _2, iter) => {
       // logger.log('got signal "row-changed" from the bluetooth model');
+      this.emit('row-changed', iter);
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.update_device(device);
@@ -32,6 +33,7 @@ class _bluetooth_battery_level_engine extends signals {
     });
     this.register_signal(this._bt_model, 'row-deleted', (_1, _2, iter) => {
       // logger.log('got signal "row-deleted" from the bluetooth model');
+      this.emit('row-deleted', iter);
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.remove_device(device);
@@ -39,6 +41,7 @@ class _bluetooth_battery_level_engine extends signals {
     });
     this.register_signal(this._bt_model, 'row-inserted', (_1, _2, iter) => {
       // logger.log('got signal "row-inserted" from the bluetooth model');
+      this.emit('row-insered', iter);
       if (iter) {
         let device = new bluetooth_device(this._bt_model, iter);
         this.add_device(device);
