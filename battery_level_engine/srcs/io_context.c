@@ -272,7 +272,7 @@ int ioc_remove_handle(ioc_handle_t* handle) {
   }
   if (d_event->type == IOC_TYPE_EVENT) {
     ioc->event_data_list = list_ioc_event_data_t_remove(d_event);
-  } else if (d_event->type = IOC_TYPE_TIMEOUT) {
+  } else if (d_event->type == IOC_TYPE_TIMEOUT) {
     if (ioc->timeout_data_list == d_event) {
       ioc->timeout_data_list = list_ioc_event_data_t_remove(d_event);
     } else {
