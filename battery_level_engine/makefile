@@ -35,6 +35,7 @@ SDIR	=	srcs
 SRC	 =	main.c \
 				misc.c \
 				io_context.c \
+				signals.c	\
 				battery_level_engine.c
 
 LFLAGS	=	-lbluetooth

@@ -3,8 +3,10 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 
 #include "./io_context.h"
+#include "./signals.h"
 #include "./battery_level_engine.h"
 
 struct ctx_data {
@@ -17,6 +19,7 @@ struct ctx_data {
 static void on_battery_level_change(void* ble, int level);
 static void on_ble_error(void* ble, char* error_string);
 static void on_stdin_data_pending(int fd, uint32_t events, struct ctx_data* data);
+static void register_signals(signals_t* s, struct ctx_data* data);
 
 
 int main(int ac, char **av) {
@@ -27,12 +30,20 @@ int main(int ac, char **av) {
 
   char*           address = av[1];
   io_context_t*   ctx;
+  signals_t*      signals;
   void*           bl_engine;
   struct ctx_data d = { 0 };
 
   if (!(ctx = create_io_context())) {
     fprintf(stderr, "create_io_context() failed\n");
     return EXIT_FAILURE;
+  }
+
+  if (!(signals = signal_create(ctx))) {
+    fprintf(stderr, "signal_create() failed\n");
+    return EXIT_FAILURE;
+  } else {
+    register_signals(signals, &d);
   }
 
   if (!(bl_engine = create_battery_level_engine(ctx))) {
@@ -75,6 +86,7 @@ int main(int ac, char **av) {
   }
 
   delete_battery_level_engine(bl_engine);
+  signal_delete(signals);
   delete_io_context(ctx);
 
   return EXIT_SUCCESS;
@@ -139,4 +151,25 @@ static void on_stdin_data_pending(int fd, uint32_t event, struct ctx_data* data)
   };
 
   exec_command(&o);
+}
+
+static void _signal_handler(struct ctx_data* data) {
+  printf("closing...\n");
+  fflush(stdout);
+  data->stop = 1;
+}
+
+static void register_signals(signals_t* s, struct ctx_data* data) {
+  signal_set_t* set = signal_create_set(
+    MAKE_SIGNAL_SET_ELEM(SIGINT, &_signal_handler, data),
+    MAKE_SIGNAL_SET_ELEM(SIGTERM, &_signal_handler, data)
+  );
+
+  if (!set) {
+    fprintf(stderr, "%s\n", strerror(errno));
+  }
+
+  if (signal_set(s, set) < 0) {
+    fprintf(stderr, "%s\n", strerror(errno));
+  }
 }

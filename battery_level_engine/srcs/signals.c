@@ -1,0 +1,115 @@
+#include <sys/epoll.h>
+#include <signal.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+
+#include "signals_def.h"
+
+typedef struct {
+  uint32_t            size;
+  signal_set_elem_t   elems[];
+} signal_set_t;
+
+typedef struct signals_s {
+  int                     signal_fd;
+  struct signalfd_siginfo fdsi;
+  io_context_t*           ctx;
+  signal_set_t*           set;
+  ioc_handle_t            handle;
+} signals_t;
+
+#define SIGNALS_INTERNAL
+#include "signals.h"
+
+signals_t*  signal_create(io_context_t* ctx) {
+  signals_t* sig = malloc(sizeof(signals_t));
+
+  if (sig == NULL) { return NULL; }
+  sig->ctx = ctx;
+  sig->set = NULL;
+  sig->signal_fd = -1;
+  return sig;
+}
+
+void  signal_delete(signals_t* s) {
+  if (!!s->set) {
+    ioc_remove_handle(s->handle);
+    free(s->set);
+  }
+
+  if (s->signal_fd != -1) {
+    close(s->signal_fd);
+  }
+
+  free(s);
+}
+
+signal_set_t* signal_create_set_(uint32_t len, signal_set_elem_t in_set[len]) {
+  signal_set_t* set = malloc(sizeof(signal_set_t) + (sizeof(signal_set_elem_t) * len));
+
+  if (set == NULL) { return NULL; }
+  set->size = len;
+  memcpy(set->elems, in_set, sizeof(signal_set_elem_t) * len);
+  return set;
+}
+
+signal_set_t* signal_create_set_empty(void) {
+  return signal_create_set_(0, (signal_set_elem_t[]) {});
+}
+
+signal_set_t* signal_set_append(signal_set_t *source, signal_set_elem_t in_set) {
+  signal_set_t* set = malloc(sizeof(signal_set_t) + (sizeof(signal_set_elem_t) * (source->size + 1)));
+
+  if (set == NULL) { return NULL; }
+  set->size = source->size + 1;
+  memcpy(set->elems, source->elems, sizeof(signal_set_elem_t) * source->size);
+  set->elems[source->size] = in_set;
+
+  free(source);
+  return set;
+}
+
+static void _internal_on_sig_recvd(int fd, uint32_t event, signals_t* s) {
+  (void) event;
+  ssize_t ss = read(fd, &s->fdsi, sizeof(struct signalfd_siginfo));
+
+  assert(ss == sizeof(struct signalfd_siginfo));
+  
+  for (uint32_t i = 0; i < s->set->size; ++i) {
+    if (s->set->elems[i].sig == s->fdsi.ssi_signo) {
+      s->set->elems[i].hdl(s->set->elems[i].data, &s->fdsi);
+      return;
+    }
+  }
+
+  assert(0); // unexpected signal catched !! 
+}
+
+int signal_set(signals_t* s, signal_set_t* set) {
+  sigset_t  mask;
+
+  if (!!s->set) {
+    ioc_remove_handle(s->handle);
+    free(s->set);
+  }
+
+  s->set = set;
+  sigemptyset(&mask);
+  for (uint32_t i = 0; i < set->size; ++i) {
+    sigaddset(&mask, set->elems[i].sig);
+  }
+
+  if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+    return -1;
+  
+  s->signal_fd = signalfd(s->signal_fd, &mask, 0);
+  if (s->signal_fd == -1) {
+    return -1;
+  }
+
+  s->handle = ioc_add_fd(s->ctx, s->signal_fd, EPOLLIN, (ioc_event_func_t)&_internal_on_sig_recvd, s);
+  return 0;
+}
+
