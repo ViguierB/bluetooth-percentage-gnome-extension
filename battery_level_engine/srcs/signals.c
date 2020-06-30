@@ -17,7 +17,7 @@ typedef struct signals_s {
   struct signalfd_siginfo fdsi;
   io_context_t*           ctx;
   signal_set_t*           set;
-  ioc_handle_t            handle;
+  ioc_handle_t*           handle;
 } signals_t;
 
 #define SIGNALS_INTERNAL
@@ -76,6 +76,7 @@ static void _internal_on_sig_recvd(int fd, uint32_t event, signals_t* s) {
   ssize_t ss = read(fd, &s->fdsi, sizeof(struct signalfd_siginfo));
 
   assert(ss == sizeof(struct signalfd_siginfo));
+  (void)ss;
   
   for (uint32_t i = 0; i < s->set->size; ++i) {
     if (s->set->elems[i].sig == s->fdsi.ssi_signo) {

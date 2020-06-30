@@ -126,7 +126,7 @@ static inline void exec_command(struct exec_options* opt) {
 
     o->cmd = strdup(str);
     o->data = opt->data;
-    ioc_handle_t h = ioc_timeout(opt->data->ctx, timeout * 1000, (ioc_timeout_func_t)&exec_command, o);
+    ioc_handle_t* h = ioc_timeout(opt->data->ctx, timeout * 1000, (ioc_timeout_func_t)&exec_command, o);
     ioc_set_handle_delete_func(h, (ioc_data_free_func_t)&free_exec_options);
   } else if (strcmp(opt->cmd, "stop") == 0) {
     opt->data->stop = 1;

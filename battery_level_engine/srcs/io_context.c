@@ -29,11 +29,11 @@ struct ioc_event_data_s {
     int                       fd;
     struct {
       int                       val;
-      bool                      care_later;
+      bool                      take_care_later;
     }                         timeout;
   }                         value;
   ioc_data_free_func_t      free_data_func;
-  ioc_data_t                data;
+  ioc_data_t*               data;
 };
 
 typedef struct io_context_s {
@@ -151,13 +151,13 @@ int  ioc_wait_once(io_context_t* ioc) {
 
     long elapsed = __now() - start;
     do {
-      if (cur->value.timeout.care_later != true) {
+      if (cur->value.timeout.take_care_later != true) {
         cur->value.timeout.val -= elapsed;
         if (cur->value.timeout.val < 0) {
           cur->value.timeout.val = 0;
         }
       } else {
-        cur->value.timeout.care_later = false;
+        cur->value.timeout.take_care_later = false;
       }
       cur = cur->next;
     } while (cur != first);
@@ -167,11 +167,11 @@ int  ioc_wait_once(io_context_t* ioc) {
   return 0;
 }
 
-io_context_t* ioc_get_context_from_handle(ioc_handle_t handle) {
+io_context_t* ioc_get_context_from_handle(ioc_handle_t* handle) {
   return ((ioc_event_data_t*)handle)->context;
 }
 
-ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_func_t handler, ioc_data_t data) {
+ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_func_t handler, ioc_data_t* data) {
   struct epoll_event        ev = { 0 };
   struct ioc_event_data_s*  d_event = malloc(sizeof (struct ioc_event_data_s));
 
@@ -205,7 +205,7 @@ ioc_handle_t ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_fu
   return (void*)d_event;
 }
 
-ioc_handle_t  ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t handler, ioc_data_t data) {
+ioc_handle_t* ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t handler, ioc_data_t* data) {
   if (timeout < 0) {
     ioc->last_error_str = "timeout argument must be > 0";
     return NULL;
@@ -224,7 +224,7 @@ ioc_handle_t  ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
   d_event->context = ioc;
   d_event->func.timeout_func = handler;
   d_event->value.timeout.val = timeout;
-  d_event->value.timeout.care_later = ioc->is_runnning;
+  d_event->value.timeout.take_care_later = ioc->is_runnning;
   d_event->data = data;
   d_event->free_data_func = NULL;
 
@@ -253,13 +253,13 @@ ioc_handle_t  ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
   return (void*)d_event;
 }
 
-ioc_handle_t ioc_get_handle(ioc_data_t* data) {
+ioc_handle_t* ioc_get_handle(ioc_data_t* data) {
   const uintptr_t data_offset = OFFSET_OF(struct ioc_event_data_s, data);
 
   return (void*)((uintptr_t)data - data_offset);
 }
 
-int ioc_remove_handle(ioc_handle_t handle) {
+int ioc_remove_handle(ioc_handle_t* handle) {
   io_context_t*             ioc = ioc_get_context_from_handle(handle);
   struct ioc_event_data_s*  d_event = handle;
 
@@ -270,15 +270,20 @@ int ioc_remove_handle(ioc_handle_t handle) {
   if (!!d_event->free_data_func) {
     d_event->free_data_func(d_event->data);
   }
-  *((d_event->type == IOC_TYPE_EVENT) 
-    ? &ioc->event_data_list
-    : &ioc->timeout_data_list // TODO: FIX THIS!! it could break the list order
-  ) = list_ioc_event_data_t_remove(d_event);
+  if (d_event->type == IOC_TYPE_EVENT) {
+    ioc->event_data_list = list_ioc_event_data_t_remove(d_event);
+  } else if (d_event->type = IOC_TYPE_TIMEOUT) {
+    if (ioc->timeout_data_list == d_event) {
+      ioc->timeout_data_list = list_ioc_event_data_t_remove(d_event);
+    } else {
+      list_ioc_event_data_t_remove(d_event);
+    }
+  }
   free(d_event);
   return 0;
 }
 
-void  ioc_set_handle_delete_func(ioc_handle_t handle, ioc_data_free_func_t free_func) {
+void  ioc_set_handle_delete_func(ioc_handle_t* handle, ioc_data_free_func_t free_func) {
   struct ioc_event_data_s*  d_event = handle;
 
   d_event->free_data_func = free_func;

@@ -22,7 +22,7 @@ typedef struct sockaddr_rc sockaddr_rc_t;
 typedef struct ble_s {
   io_context_t*   ctx;
   socket_t        sock;
-  ioc_handle_t    ioc_sock_handle;
+  ioc_handle_t*   ioc_sock_handle;
   sockaddr_rc_t   rem_addr;
   uint8_t         channel;
   void*           event_handlers[__BLE_EVENTS_ENUM_LEN__];

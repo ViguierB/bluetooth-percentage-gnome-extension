@@ -18,7 +18,8 @@ endif
 
 ifeq	($(RELEASE),true)
  CFLAGS	+=	$(OPTI_FLAG)
- CFLAGS	+=	-Werror -DNDEBUG
+ CFLAGS	+=	-Werror -DNDEBUG -fdata-sections -ffunction-sections
+ LFLAGS +=	-Wl,--gc-sections -Wl,--strip-all
  DEBUG	=	false
 else
  CFLAGS	+=	-O0
@@ -38,7 +39,7 @@ SRC	 =	main.c \
 				signals.c	\
 				battery_level_engine.c
 
-LFLAGS	=	-lbluetooth
+LFLAGS	+=	-lbluetooth
 
 _OBJ	=	$(SRC:.c=.o)
 
