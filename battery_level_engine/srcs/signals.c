@@ -101,8 +101,13 @@ int signal_set(signals_t* s, signal_set_t* set) {
     sigaddset(&mask, set->elems[i].sig);
   }
 
-  if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
-    return -1;
+# if defined(SIG_BLOCK)
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+      return -1;
+# else
+    #error "It's Over 9000! (no joke, you are missing a system header file)"
+# endif
+
   
   s->signal_fd = signalfd(s->signal_fd, &mask, 0);
   if (s->signal_fd == -1) {
