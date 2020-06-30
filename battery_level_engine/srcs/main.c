@@ -161,8 +161,8 @@ static void _signal_handler(struct ctx_data* data) {
 
 static void register_signals(signals_t* s, struct ctx_data* data) {
   signal_set_t* set = signal_create_set(
-    MAKE_SIGNAL_SET_ELEM(SIGINT, &_signal_handler, data),
-    MAKE_SIGNAL_SET_ELEM(SIGTERM, &_signal_handler, data)
+    { SIGINT, &_signal_handler, data },
+    { SIGTERM, &_signal_handler, data }
   );
 
   if (!set) {

@@ -59,15 +59,14 @@ signal_set_t* signal_create_set_empty(void) {
   return signal_create_set_(0, (signal_set_elem_t[]) {});
 }
 
-signal_set_t* signal_set_append(signal_set_t *source, signal_set_elem_t in_set) {
-  signal_set_t* set = malloc(sizeof(signal_set_t) + (sizeof(signal_set_elem_t) * (source->size + 1)));
+signal_set_t* signal_set_append_(signal_set_t *source, uint32_t len, signal_set_elem_t in_set[len]) {
+  size_t        new_size = source->size + len;
+  size_t        last_size = source->size;
+  signal_set_t* set = realloc(source, sizeof(signal_set_t) + (sizeof(signal_set_elem_t) * new_size));
 
   if (set == NULL) { return NULL; }
-  set->size = source->size + 1;
-  memcpy(set->elems, source->elems, sizeof(signal_set_elem_t) * source->size);
-  set->elems[source->size] = in_set;
-
-  free(source);
+  set->size = new_size;
+  memcpy(&(set->elems[last_size]), in_set, sizeof(signal_set_elem_t) * len);
   return set;
 }
 
