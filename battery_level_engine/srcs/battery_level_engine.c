@@ -61,66 +61,39 @@ ssize_t __internal_ble_recv(int __fd, void *__buf, size_t __n, int __flags) {
 #endif
 
 static io_context_t*    _sdp_ctx = NULL;
-static int              _sdp_com_pipe[2] = { 0 };
 static pthread_t        _sdp_thread = 0;
-static pthread_mutex_t  _sdp_thread_ready_mutex;
-
-static void _sdp_on_com_fd_data_pending(int _fd, uint32_t _event, bool* stop) {
-  (void)_fd;
-  (void)_event;
-  static char buf[128];
-
-  ssize_t ss = read(_sdp_com_pipe[0], buf, 128);
-
-  if (ss == 4 && memcmp(buf, "stop", 4) == 0) {
-    *stop = true;
-  }
-}
+static bool             _sdp_thread_stop = false;
 
 static void* _sdp_routine() {
-  bool stop = false;
-
-  sigset_t mask;
+  sigset_t  mask;
+  
   sigfillset(&mask);
   pthread_sigmask(SIG_SETMASK, &mask, NULL);
 
-  _sdp_ctx = create_io_context();
-  
-  ioc_add_fd(_sdp_ctx, _sdp_com_pipe[0], EPOLLIN | EPOLLOUT, (ioc_event_func_t)&(_sdp_on_com_fd_data_pending), &stop);
-
-  pthread_mutex_unlock(&_sdp_thread_ready_mutex);
-
   int ctx_res;
   while ((ctx_res = ioc_wait_once(_sdp_ctx)) == 0) {
-    if (stop) {
+    if (_sdp_thread_stop) {
       break;
     }
   }
 
   delete_io_context(_sdp_ctx);
-  close(_sdp_com_pipe[0]);
-  close(_sdp_com_pipe[1]);
 
   return NULL;
 }
 
 __attribute__((constructor)) static void _create_sdp_thread() {
-  if (pipe(_sdp_com_pipe) == -1) {
-    perror("pipe");
-    exit(EXIT_FAILURE);
-  }
-  pthread_mutex_init(&_sdp_thread_ready_mutex, NULL);
-  pthread_mutex_lock(&_sdp_thread_ready_mutex); 
+  _sdp_ctx = create_io_context();
   if (pthread_create(&_sdp_thread, NULL, (void*)_sdp_routine, NULL)) { 
     perror("pthread_create"); 
     exit(EXIT_FAILURE); 
   }
-  pthread_mutex_lock(&_sdp_thread_ready_mutex); 
   sched_yield(); // force the new thread to run now by putting main thread to the back of the run stack
 }
 
 __attribute__((destructor)) static void _cleanup_sdp_thread() {
-  write(_sdp_com_pipe[1], "stop", 4);
+  _sdp_thread_stop = true;
+  ioc_stop_wait(_sdp_ctx);
   pthread_join(_sdp_thread, NULL);
 }
 
