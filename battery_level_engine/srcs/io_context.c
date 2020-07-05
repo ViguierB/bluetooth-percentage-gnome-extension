@@ -194,7 +194,9 @@ io_context_t* ioc_get_context_from_handle(ioc_handle_t* handle) {
 void  ioc_stop_wait(io_context_t* ioc) {
   char c = 1;
 
-  write(ioc->abort_pipe_trick[1], &c, 1);
+  if (ioc->is_runnning) {
+    write(ioc->abort_pipe_trick[1], &c, 1);
+  }
 }
 
 ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_func_t handler, ioc_data_t* data) {
