@@ -9,6 +9,7 @@
 
 typedef struct {
   uint32_t            size;
+  sigset_t            old;
   signal_set_elem_t   elems[];
 } signal_set_t;
 
@@ -91,6 +92,9 @@ int signal_set(signals_t* s, signal_set_t* set) {
   sigset_t  mask;
 
   if (!!s->set) {
+    if (sigprocmask(SIG_SETMASK, &s->set->old, NULL) == -1) {
+      return -1;
+    }
     ioc_remove_handle(s->handle);
     free(s->set);
   }
@@ -101,14 +105,9 @@ int signal_set(signals_t* s, signal_set_t* set) {
     sigaddset(&mask, set->elems[i].sig);
   }
 
-# if defined(SIG_BLOCK)
-    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
-      return -1;
-# else
-    #error "It's Over 9000! (no joke, you are missing a system header file)"
-# endif
+  if (sigprocmask(SIG_BLOCK, &mask, &s->set->old) == -1)
+    return -1;
 
-  
   s->signal_fd = signalfd(s->signal_fd, &mask, 0);
   if (s->signal_fd == -1) {
     return -1;

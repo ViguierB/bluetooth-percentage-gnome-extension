@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/epoll.h>
 
 #include "./io_context.h"
 #include "./signals.h"
@@ -19,8 +20,8 @@ struct ctx_data {
 static void on_battery_level_change(void* ble, int level);
 static void on_ble_error(void* ble, char* error_string);
 static void on_stdin_data_pending(int fd, uint32_t events, struct ctx_data* data);
+static void on_ble_rfcomm_channel_found(void* ble, bool success, const char* address, uint8_t channel);
 static void register_signals(signals_t* s, struct ctx_data* data);
-
 
 int main(int ac, char **av) {
   if (ac != 2 ) {
@@ -51,6 +52,7 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
+  ble_register_event_handler(bl_engine, BLE_RFCOMM_CHANNEL_FOUND, &on_ble_rfcomm_channel_found);
   ble_register_event_handler(bl_engine, BLE_BATTERY_LEVEL, &on_battery_level_change);
   ble_register_event_handler(bl_engine, BLE_ERROR, &on_ble_error);
 
@@ -59,20 +61,9 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
-
-  if (ble_connect_to(bl_engine, address) < 0) {
-    fprintf(stderr, "unable to connect to %s: %s\n", address, ble_get_last_error_message(bl_engine));
-    return EXIT_FAILURE;
-  }
-
-  if (ble_hfp_nogiciate(bl_engine) < 0) {
-    fprintf(stderr, "unable to negociate with %s: %s\n", address, ble_get_last_error_message(bl_engine));
-    return EXIT_FAILURE;
-  }
-
   d.ctx = ctx;
   d.ble = bl_engine;
-  ioc_add_fd(ctx, STDIN_FILENO, 0, (ioc_event_func_t)&on_stdin_data_pending, &d);
+  ioc_add_fd(ctx, STDIN_FILENO, EPOLLIN, (ioc_event_func_t)&on_stdin_data_pending, &d);
 
   int ctx_res;
   while ((ctx_res = ioc_wait_once(ctx)) == 0) {
@@ -85,11 +76,27 @@ int main(int ac, char **av) {
     return EXIT_FAILURE;
   }
 
+# ifndef NDEBUG
+    fprintf(stderr, "closing...\n");
+    fflush(stderr);
+# endif
+
   delete_battery_level_engine(bl_engine);
   signal_delete(signals);
   delete_io_context(ctx);
 
   return EXIT_SUCCESS;
+}
+
+static void on_ble_rfcomm_channel_found(void* ble, bool success, const char* address, uint8_t channel) {
+  if (!success) {
+    fprintf(stderr, "Failed to connect to SDP server on %s: %s\n", address, ble_get_last_error_message(ble));
+    exit(EXIT_FAILURE);
+  }
+  if (ble_connect_to(ble, address, channel) < 0) {
+    fprintf(stderr, "unable to connect to %s: %s\n", address, ble_get_last_error_message(ble));
+    exit(EXIT_FAILURE);
+  }
 }
 
 static void on_battery_level_change(void* ble, int level) {
@@ -154,15 +161,15 @@ static void on_stdin_data_pending(int fd, uint32_t event, struct ctx_data* data)
 }
 
 static void _signal_handler(struct ctx_data* data) {
-  printf("closing...\n");
-  fflush(stdout);
   data->stop = 1;
 }
 
 static void register_signals(signals_t* s, struct ctx_data* data) {
   signal_set_t* set = signal_create_set(
-    { SIGINT, &_signal_handler, data },
-    { SIGTERM, &_signal_handler, data }
+    // { SIGINT, &_signal_handler, data },
+    // { SIGTERM, &_signal_handler, data },
+    { SIGUSR1, &_signal_handler, data },
+    { SIGUSR2, &_signal_handler, data }
   );
 
   if (!set) {

@@ -39,7 +39,7 @@ SRC	 =	main.c \
 				signals.c	\
 				battery_level_engine.c
 
-LFLAGS	+=	-lbluetooth
+LFLAGS	+=	-lbluetooth -lpthread
 
 _OBJ	=	$(SRC:.c=.o)
 

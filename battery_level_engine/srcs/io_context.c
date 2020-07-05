@@ -5,6 +5,7 @@
 #include <time.h>
 #include <sys/epoll.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #include "./circular_double_linked_list.h"
 #include "./io_context_def.h"
@@ -39,6 +40,7 @@ struct ioc_event_data_s {
 typedef struct io_context_s {
 
   int                       epoll_fd;
+  int                       abort_pipe_trick[2];
   struct epoll_event        events[IOC_MAX_EVENTS];
   char*                     last_error_str;
   struct ioc_event_data_s*  event_data_list;
@@ -55,12 +57,26 @@ DECLARE_CIRCULAR_DOUBLE_LINKED_LIST(ioc_event_data_t)
 
 #define OFFSET_OF(ptype, memb) ((uintptr_t)&(((ptype*)0)->memb))
 
+static void _internal_ioc_on_abort_pipe_ready(int fd, uint32_t events, void* data) {
+  (void) events;
+  (void) data;
+  char buf[8];
+
+  read(fd, buf, 8); // flush pipe
+}
+
 io_context_t* create_io_context() {
   io_context_t* ioc = calloc(1, sizeof(io_context_t));
   
   if (!ioc) { return NULL; }
   ioc->epoll_fd = epoll_create1(0);
   if (ioc->epoll_fd == -1) { return NULL; }
+
+  if (pipe(ioc->abort_pipe_trick) < 0) {
+    return NULL;
+  }
+
+  ioc_add_fd(ioc, ioc->abort_pipe_trick[0], EPOLLIN | EPOLLOUT, &_internal_ioc_on_abort_pipe_ready, NULL);
   return ioc;
 }
 
@@ -84,6 +100,8 @@ void  delete_io_context(io_context_t* ioc) {
   __clean_list(ioc->event_data_list);
   __clean_list(ioc->timeout_data_list);
   close(ioc->epoll_fd);
+  close(ioc->abort_pipe_trick[0]);
+  close(ioc->abort_pipe_trick[1]);
   free(ioc);
 }
 
@@ -123,9 +141,11 @@ int  ioc_wait_once(io_context_t* ioc) {
 
   nfds = epoll_wait(ioc->epoll_fd, ioc->events, IOC_MAX_EVENTS, timeout);
   if (nfds == -1) {
-    ioc->last_error_str = strerror(errno);
-    ioc->is_runnning = false;
-    return -1;
+    if (errno != EINTR) {
+      ioc->last_error_str = strerror(errno);
+      ioc->is_runnning = false;
+      return -1;
+    }
   } else if (nfds == 0) {
     struct ioc_event_data_s*  d_event = ioc->timeout_data_list;
 
@@ -171,6 +191,12 @@ io_context_t* ioc_get_context_from_handle(ioc_handle_t* handle) {
   return ((ioc_event_data_t*)handle)->context;
 }
 
+void  ioc_stop_wait(io_context_t* ioc) {
+  char c = 1;
+
+  write(ioc->abort_pipe_trick[1], &c, 1);
+}
+
 ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_func_t handler, ioc_data_t* data) {
   struct epoll_event        ev = { 0 };
   struct ioc_event_data_s*  d_event = malloc(sizeof (struct ioc_event_data_s));
@@ -179,6 +205,9 @@ ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_f
     ioc->last_error_str = "out of memory";
     return NULL;
   }
+
+  assert(!!handler);
+  assert(!!ioc);
 
   d_event->prev = d_event; //important (requested by the linked list)
   d_event->next = d_event; //important (requested by the linked list)
@@ -195,12 +224,16 @@ ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_f
     ioc->event_data_list = d_event;
   }
 
-  ev.events = events || EPOLLIN;
+  ev.events = !!events ? events : EPOLLIN;
   ev.data.ptr = d_event;
   if (epoll_ctl(ioc->epoll_fd, EPOLL_CTL_ADD, fd, &ev) == -1) {
     ioc->last_error_str = strerror(errno);
     free(d_event);
     return NULL;
+  }
+
+  if (ioc->is_runnning) {
+    ioc_stop_wait(ioc);
   }
   return (void*)d_event;
 }
@@ -217,6 +250,9 @@ ioc_handle_t* ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
     ioc->last_error_str = "out of memory";
     return NULL;
   }
+
+  assert(!!handler);
+  assert(!!ioc);
 
   d_event->next = d_event;
   d_event->prev = d_event;
@@ -249,6 +285,9 @@ ioc_handle_t* ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
         cur = cur->next;
       } while (cur != first);
     }
+  }
+  if (ioc->is_runnning) {
+    ioc_stop_wait(ioc);
   }
   return (void*)d_event;
 }

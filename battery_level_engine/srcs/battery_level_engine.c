@@ -8,6 +8,10 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <sys/epoll.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <sched.h>
+#include <signal.h>
 
 #define _BLE_INTERNAL_
 #include "./battery_level_engine.h"
@@ -22,6 +26,18 @@
 
 #define _ble_send(ble, hdv_data) __internal_ble_send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
 #define _ble_recv(ble, hdv_data) __internal_ble_recv(ble->sock, hdv_data, BUFFER_SIZE, 0)
+
+#define _CALL_EVENT_HANDLER(function_type, event_name, ...) {       \
+  if (!!ble->event_handlers[event_name]) {                          \
+    ((function_type)ble->event_handlers[event_name])(__VA_ARGS__);  \
+  }                                                                 \
+}
+
+#define _CALL_EVENT_HANDLER_WITH_RETURN(function_type, ret, event_name, ...) {  \
+  if (!!ble->event_handlers[event_name]) {                                      \
+    ret = ((function_type)ble->event_handlers[event_name])(__VA_ARGS__);        \
+  }                                                                             \
+}
 
 #ifndef NDEBUG
 
@@ -44,6 +60,69 @@ ssize_t __internal_ble_recv(int __fd, void *__buf, size_t __n, int __flags) {
 
 #endif
 
+static io_context_t*    _sdp_ctx = NULL;
+static int              _sdp_com_pipe[2] = { 0 };
+static pthread_t        _sdp_thread = 0;
+static pthread_mutex_t  _sdp_thread_ready_mutex;
+
+static void _sdp_on_com_fd_data_pending(int _fd, uint32_t _event, bool* stop) {
+  (void)_fd;
+  (void)_event;
+  static char buf[128];
+
+  ssize_t ss = read(_sdp_com_pipe[0], buf, 128);
+
+  if (ss == 4 && memcmp(buf, "stop", 4) == 0) {
+    *stop = true;
+  }
+}
+
+static void* _sdp_routine() {
+  bool stop = false;
+
+  sigset_t mask;
+  sigfillset(&mask);
+  pthread_sigmask(SIG_SETMASK, &mask, NULL);
+
+  _sdp_ctx = create_io_context();
+  
+  ioc_add_fd(_sdp_ctx, _sdp_com_pipe[0], EPOLLIN | EPOLLOUT, (ioc_event_func_t)&(_sdp_on_com_fd_data_pending), &stop);
+
+  pthread_mutex_unlock(&_sdp_thread_ready_mutex);
+
+  int ctx_res;
+  while ((ctx_res = ioc_wait_once(_sdp_ctx)) == 0) {
+    if (stop) {
+      break;
+    }
+  }
+
+  delete_io_context(_sdp_ctx);
+  close(_sdp_com_pipe[0]);
+  close(_sdp_com_pipe[1]);
+
+  return NULL;
+}
+
+__attribute__((constructor)) static void _create_sdp_thread() {
+  if (pipe(_sdp_com_pipe) == -1) {
+    perror("pipe");
+    exit(EXIT_FAILURE);
+  }
+  pthread_mutex_init(&_sdp_thread_ready_mutex, NULL);
+  pthread_mutex_lock(&_sdp_thread_ready_mutex); 
+  if (pthread_create(&_sdp_thread, NULL, (void*)_sdp_routine, NULL)) { 
+    perror("pthread_create"); 
+    exit(EXIT_FAILURE); 
+  }
+  pthread_mutex_lock(&_sdp_thread_ready_mutex); 
+  sched_yield(); // force the new thread to run now by putting main thread to the back of the run stack
+}
+
+__attribute__((destructor)) static void _cleanup_sdp_thread() {
+  write(_sdp_com_pipe[1], "stop", 4);
+  pthread_join(_sdp_thread, NULL);
+}
 
 ble_t* create_battery_level_engine(io_context_t* ctx) {
   ble_t* ble = calloc(1, sizeof(ble_t));
@@ -71,8 +150,34 @@ int   delete_battery_level_engine(ble_t* ble) {
   return 0;
 }
 
+struct __data_find_channel_result {
+  ble_t*      ble;
+  const char* addr;
+  bool        success;
+  uint8_t     channel;
+};
 
-int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
+struct __data_find_channel {
+  ble_t*      ble;
+  const char* addr;
+};
+
+static void _internal_ble_find_rfcomm_channel_ended(struct __data_find_channel_result* res) {
+  const ble_t* ble = res->ble;
+
+  _CALL_EVENT_HANDLER(
+    ble_on_rfcomm_channel_find_ended_handler_t,
+    BLE_RFCOMM_CHANNEL_FOUND,
+    res->ble, res->success, res->addr, res->channel 
+  );
+}
+
+static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) {
+  ble_t*      ble = data->ble;
+  const char* addr = data->addr;
+
+  free(data);
+
   bdaddr_t target;
   sdp_list_t *attrid, *search, *seq, *next;
   sdp_session_t *session = 0;
@@ -87,7 +192,8 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
 
   if (!session) {
     ble->ble_error_message = strerror(errno);
-    return -1;
+    ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, ble);
+    return;
   }
 
   attrid = sdp_list_append(0, &range);
@@ -95,7 +201,8 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
   if (sdp_service_search_attr_req(session, search, SDP_ATTR_REQ_RANGE, attrid, &seq)) {
     ble->ble_error_message = strerror(errno);
     sdp_close(session);
-    return -1;
+    ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, ble);
+    return;
   }
   sdp_list_free(attrid, 0);
   sdp_list_free(search, 0);
@@ -120,33 +227,69 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
 
   sdp_close(session);
 
+  struct __data_find_channel_result* res = malloc(sizeof(*res));
+
+  if (!res) {
+    perror("malloc()");
+    exit(EXIT_FAILURE);
+  }
+
+  res->ble = ble;
+  res->addr = addr;
+
   if(port != 0) {
 #   ifndef NDEBUG
       fprintf(stderr, "rfcomm channel: %d\n", port);
 #   endif
-    ble->channel = port;
-    return 0;
+
+    res->channel = port;
+    res->success = true;
   } else {
     ble->ble_error_message = "Device not compatible";
+    res->success = false;
+  }
+  ioc_set_handle_delete_func(
+    ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, res),
+    &free
+  );
+}
+
+int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
+  struct __data_find_channel* data = malloc(sizeof(*data));
+
+  if (!data) {
+    ble->ble_error_message = "Out of memory";
     return -1;
   }
+
+  data->ble = ble;
+  data->addr = addr;
+
+  ioc_timeout(_sdp_ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel, data);
+  return 0;
 }
 
 static void  _ble_on_socket_data_is_pending(int fd, uint32_t event, ble_t* ble) {
   (void)event;
   (void)fd;
 
-  if (!ble->ready) {
-    ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
-    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
-    return;
-  }
-
   if (ble->is_connected) {
     ssize_t recv_len = 0;
 
     while ((recv_len = _ble_recv(ble, ble->buffer)) >= 0) {
-      if (_ble_strstr(ble, "IPHONEACCEV", recv_len)) {
+      if (_ble_strstr(ble, "BRSF", recv_len)) {
+        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
+      } else if(_ble_strstr(ble, "CIND=", recv_len)) {
+        _ble_send(ble, "+CIND: (\"battchg\",(0-5)),(\"signal\",(0-5))(\"service\",(0,1)),(\"call\",(0,1)),(\"callsetup\",(0-3)),(\"callheld\",(0-2)),(\"roam\",(0,1))"BLE_END_LINE);
+      } else if (_ble_strstr(ble, "CIND?", recv_len)) {
+        _ble_send(ble, "+CIND: 5,5,1,0,0,0,0"BLE_END_LINE);
+      } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
+        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
+      } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
+        _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
+        ble->ready = true;
+        _CALL_EVENT_HANDLER(ble_on_ready_handler_t, BLE_READY, ble);
+      } else if (_ble_strstr(ble, "IPHONEACCEV", recv_len)) {
         _ble_send(ble, "OK");
         if (!_ble_strstr(ble, ",", recv_len)) { continue; }
         ble->buffer[recv_len] = '\0';
@@ -187,8 +330,10 @@ void  ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_ha
   ble->event_handlers[e] = event_handler;
 }
 
-int ble_connect_to(ble_t* ble, char* addr) {
-  if (ble->channel == 0) {
+int ble_connect_to(ble_t* ble, const char* addr, uint8_t channel) {
+  channel = channel ? channel : ble->channel;
+  
+  if (channel == 0) {
     ble->ble_error_message = "No channel found, please run 'ble_find_rfcomm_channel()' before";
   }
 
@@ -199,7 +344,7 @@ int ble_connect_to(ble_t* ble, char* addr) {
     return -1;
   }
   ble->rem_addr.rc_family = AF_BLUETOOTH;
-  ble->rem_addr.rc_channel = (uint8_t) ble->channel;
+  ble->rem_addr.rc_channel = (uint8_t) channel;
   str2ba(addr, &ble->rem_addr.rc_bdaddr);
 
   int connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
@@ -209,41 +354,10 @@ int ble_connect_to(ble_t* ble, char* addr) {
     return connect_res;
   }
 
-  ble->ioc_sock_handle = ioc_add_fd(ble->ctx, ble->sock, EPOLLIN | EPOLLOUT, (ioc_event_func_t)&_ble_on_socket_data_is_pending, ble);
+  ble->ioc_sock_handle = ioc_add_fd(ble->ctx, ble->sock, EPOLLIN, (ioc_event_func_t)&_ble_on_socket_data_is_pending, ble);
 
   ble->is_connected = 1;
   return 0;
-}
-
-
-int ble_hfp_nogiciate(ble_t* ble) {
-  if (ble->is_connected) {
-    ssize_t recv_len = 0;
-
-    while ((recv_len = _ble_recv(ble, ble->buffer)) >= 0) {
-      if (_ble_strstr(ble, "BRSF", recv_len)) {
-        _ble_send(ble, "+BRSF:20"BLE_END_LINE);
-      } else if(_ble_strstr(ble, "CIND=", recv_len)) {
-        _ble_send(ble, "+CIND: (\"battchg\",(0-5)),(\"signal\",(0-5))(\"service\",(0,1)),(\"call\",(0,1)),(\"callsetup\",(0-3)),(\"callheld\",(0-2)),(\"roam\",(0,1))"BLE_END_LINE);
-      } else if (_ble_strstr(ble, "CIND?", recv_len)) {
-        _ble_send(ble, "+CIND: 5,5,1,0,0,0,0"BLE_END_LINE);
-      } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
-        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
-      } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
-        _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
-        ble->ready = 1;
-        return 0;
-      } else {
-        _ble_send(ble, "OK");
-      }
-    }
-
-    ble->ble_error_message = "Device not compatible";
-    return -1;
-  } else {
-    ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
-    return -1;
-  }
 }
 
 int ble_send_command(ble_t* ble, const char* cmd) {
@@ -252,7 +366,7 @@ int ble_send_command(ble_t* ble, const char* cmd) {
     return -1;
   }
   if (!ble->ready) {
-    ble->ble_error_message = "You must call 'ble_hfp_negociate()' before";
+    ble->ble_error_message = "You must wait the event READY before";
     return -1;
   }
 
