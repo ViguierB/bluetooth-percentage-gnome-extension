@@ -34,9 +34,11 @@ ODIR	=	objs
 SDIR	=	srcs
 
 SRC	 =	main.c \
+				command.c \
 				misc.c \
 				io_context.c \
 				signals.c	\
+				connection_manager.c \
 				battery_level_engine.c
 
 LFLAGS	+=	-lbluetooth -lpthread

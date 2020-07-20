@@ -29,7 +29,10 @@ typedef struct ble_s {
   ioc_handle_t*   ioc_sock_handle;
   sockaddr_rc_t   rem_addr;
   uint8_t         channel;
-  void*           event_handlers[__BLE_EVENTS_ENUM_LEN__];
+  struct {
+    void*         handler;
+    void*         data;
+  }               event_handlers[__BLE_EVENTS_ENUM_LEN__];
   bool            is_connected;
   bool            ready;
   char*           ble_error_message;
@@ -46,15 +49,15 @@ void          free_split(char** sstr);
 typedef void ble_t;
 #endif
 
-typedef void  (*ble_on_level_change_handler_t)(ble_t*, int level);
-typedef void  (*ble_on_ready_handler_t)(ble_t*);
-typedef void  (*ble_on_error_handler_t)(ble_t*, char *error);
-typedef void  (*ble_on_rfcomm_channel_find_ended_handler_t)(ble_t*, bool success, const char* addr, uint8_t channel);
+typedef void  (*ble_on_level_change_handler_t)(ble_t*, int level, void* data);
+typedef void  (*ble_on_ready_handler_t)(ble_t*, void* data);
+typedef void  (*ble_on_error_handler_t)(ble_t*, char *error, void* data);
+typedef void  (*ble_on_rfcomm_channel_find_ended_handler_t)(ble_t*, bool success, const char* addr, uint8_t channel, void* data);
 
 ble_t*      create_battery_level_engine(io_context_t*);
 int         delete_battery_level_engine(ble_t*);
 int         ble_find_rfcomm_channel(ble_t*, const char*);
-void        ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_handler);
+void        ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_handler, void* data);
 int         ble_connect_to(ble_t*, const char* addr, uint8_t channel);
 int         ble_get_battery_level(ble_t*);
 const char* ble_get_last_error_message(ble_t*);

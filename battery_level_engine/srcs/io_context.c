@@ -211,14 +211,16 @@ ioc_handle_t* ioc_add_fd(io_context_t* ioc, int fd, uint32_t events, ioc_event_f
   assert(!!handler);
   assert(!!ioc);
 
-  d_event->prev = d_event; //important (requested by the linked list)
-  d_event->next = d_event; //important (requested by the linked list)
-  d_event->type = IOC_TYPE_EVENT;
-  d_event->context = ioc;
-  d_event->func.fd_func = handler;
-  d_event->value.fd = fd; // end user -> hidden
-  d_event->free_data_func = NULL;
-  d_event->data = data;
+  *d_event = (struct ioc_event_data_s) {
+    .prev = d_event, //important (requested by the linked list)
+    .next = d_event, //important (requested by the linked list)
+    .type = IOC_TYPE_EVENT,
+    .context = ioc,
+    .func.fd_func = handler,
+    .value.fd = fd, // end user -> hidden
+    .free_data_func = NULL,
+    .data = data
+  };
 
   if (ioc->event_data_list) {
     list_ioc_event_data_t_add_after(ioc->event_data_list, d_event);
@@ -256,15 +258,17 @@ ioc_handle_t* ioc_timeout(io_context_t* ioc, int timeout, ioc_timeout_func_t han
   assert(!!handler);
   assert(!!ioc);
 
-  d_event->next = d_event;
-  d_event->prev = d_event;
-  d_event->type = IOC_TYPE_TIMEOUT;
-  d_event->context = ioc;
-  d_event->func.timeout_func = handler;
-  d_event->value.timeout.val = timeout;
-  d_event->value.timeout.take_care_later = ioc->is_runnning;
-  d_event->data = data;
-  d_event->free_data_func = NULL;
+  *d_event = (struct ioc_event_data_s) {
+    .next = d_event,
+    .prev = d_event,
+    .type = IOC_TYPE_TIMEOUT,
+    .context = ioc,
+    .func.timeout_func = handler,
+    .value.timeout.val = timeout,
+    .value.timeout.take_care_later = ioc->is_runnning,
+    .data = data,
+    .free_data_func = NULL
+  };
 
   if (ioc->timeout_data_list == NULL) {
     ioc->timeout_data_list = d_event;

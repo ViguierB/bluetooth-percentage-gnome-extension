@@ -20,22 +20,24 @@
 # include <stdio.h>
 #endif
 
-#define HANDFREEUNIT_HANDLE 0x10008
-
 #define BLE_END_LINE "\r\n\r\nOK"
 
 #define _ble_send(ble, hdv_data) __internal_ble_send(ble->sock, "\r\n" hdv_data "\r\n", sizeof(hdv_data) + 4, 0)
 #define _ble_recv(ble, hdv_data) __internal_ble_recv(ble->sock, hdv_data, BUFFER_SIZE, 0)
 
-#define _CALL_EVENT_HANDLER(function_type, event_name, ...) {       \
-  if (!!ble->event_handlers[event_name]) {                          \
-    ((function_type)ble->event_handlers[event_name])(__VA_ARGS__);  \
-  }                                                                 \
+#define _CALL_EVENT_HANDLER(function_type, event_name, ...) { \
+  if (!!ble->event_handlers[event_name].handler) {            \
+    ((function_type)ble->event_handlers[event_name].handler)( \
+      __VA_ARGS__, ble->event_handlers[event_name].data       \
+    );                                                        \
+  }                                                           \
 }
 
 #define _CALL_EVENT_HANDLER_WITH_RETURN(function_type, ret, event_name, ...) {  \
-  if (!!ble->event_handlers[event_name]) {                                      \
-    ret = ((function_type)ble->event_handlers[event_name])(__VA_ARGS__);        \
+  if (!!ble->event_handlers[event_name].handler) {                              \
+    ret = ((function_type)ble->event_handlers[event_name].handler)(             \
+      __VA_ARGS__, ble->event_handlers[event_name].data                         \
+    );                                                                          \
   }                                                                             \
 }
 
@@ -151,12 +153,21 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
 
   free(data);
 
-  bdaddr_t target;
-  sdp_list_t *attrid, *search, *seq, *next;
-  sdp_session_t *session = 0;
-  uint32_t range = 0x0000ffff;
-  uuid_t group = { 0 };
-  uint8_t port = 0;
+  bdaddr_t                            target;
+  sdp_list_t                          *attrid, *search, *seq, *next;
+  sdp_session_t*                      session = 0;
+  uint32_t                            range = 0x0000ffff;
+  uuid_t                              group = { 0 };
+  uint8_t                             port = 0;
+  struct __data_find_channel_result*  res = malloc(sizeof(*res));
+
+  if (!res) {
+    perror("malloc()");
+    exit(EXIT_FAILURE);
+  }
+
+  res->ble = ble;
+  res->addr = addr;
 
   str2ba(addr, &target);
   sdp_uuid16_create(&group, HANDSFREE_SVCLASS_ID);
@@ -165,7 +176,11 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
 
   if (!session) {
     ble->ble_error_message = strerror(errno);
-    ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, ble);
+    res->success = false;
+    ioc_set_handle_delete_func(
+      ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, res),
+      &free
+    );
     return;
   }
 
@@ -174,7 +189,11 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
   if (sdp_service_search_attr_req(session, search, SDP_ATTR_REQ_RANGE, attrid, &seq)) {
     ble->ble_error_message = strerror(errno);
     sdp_close(session);
-    ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, ble);
+    res->success = false;
+    ioc_set_handle_delete_func(
+      ioc_timeout(ble->ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel_ended, res),
+      &free
+    );
     return;
   }
   sdp_list_free(attrid, 0);
@@ -200,16 +219,6 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
 
   sdp_close(session);
 
-  struct __data_find_channel_result* res = malloc(sizeof(*res));
-
-  if (!res) {
-    perror("malloc()");
-    exit(EXIT_FAILURE);
-  }
-
-  res->ble = ble;
-  res->addr = addr;
-
   if(port != 0) {
 #   ifndef NDEBUG
       fprintf(stderr, "rfcomm channel: %d\n", port);
@@ -218,7 +227,7 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
     res->channel = port;
     res->success = true;
   } else {
-    ble->ble_error_message = "Device not compatible";
+    ble->ble_error_message = "Device not compatible: no hand free channel found";
     res->success = false;
   }
   ioc_set_handle_delete_func(
@@ -227,6 +236,7 @@ static void _internal_ble_find_rfcomm_channel(struct __data_find_channel* data) 
   );
 }
 
+// result will be given by registring event: ble_register_event_handler(ioc, BLE_RFCOMM_CHANNEL_FOUND, &your_callback)
 int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
   struct __data_find_channel* data = malloc(sizeof(*data));
 
@@ -238,6 +248,8 @@ int ble_find_rfcomm_channel(ble_t *ble, const char* addr) {
   data->ble = ble;
   data->addr = addr;
 
+  // call _internal_ble_find_rfcomm_channel inside the _sdp_ctx that is running in an other thread
+  //   that can "simulate" an async method
   ioc_timeout(_sdp_ctx, 0, (ioc_timeout_func_t)&_internal_ble_find_rfcomm_channel, data);
   return 0;
 }
@@ -257,7 +269,7 @@ static void  _ble_on_socket_data_is_pending(int fd, uint32_t event, ble_t* ble) 
       } else if (_ble_strstr(ble, "CIND?", recv_len)) {
         _ble_send(ble, "+CIND: 5,5,1,0,0,0,0"BLE_END_LINE);
       } else if (_ble_strstr(ble, "AT+XAPL", recv_len)) {
-        _ble_send(ble, "+XAPL=iPhone,5"BLE_END_LINE); // lel
+        _ble_send(ble, "+XAPL=iPhone,7"BLE_END_LINE); // lel
       } else if (_ble_strstr(ble, "AT+APLSIRI?", recv_len)) {
         _ble_send(ble, "+APLSIRI=0"BLE_END_LINE);
         ble->ready = true;
@@ -281,7 +293,8 @@ static void  _ble_on_socket_data_is_pending(int fd, uint32_t event, ble_t* ble) 
               int   value = atoi(commands[i + 1]);
 
               free_split(commands);
-              return ((ble_on_level_change_handler_t)ble->event_handlers[BLE_BATTERY_LEVEL])(ble, (value + 1) * 10);
+              _CALL_EVENT_HANDLER(ble_on_level_change_handler_t, BLE_BATTERY_LEVEL, ble, (value + 1) * 10);
+              return;
             }
           }
           free_split(commands);
@@ -291,23 +304,31 @@ static void  _ble_on_socket_data_is_pending(int fd, uint32_t event, ble_t* ble) 
       }
     }
 
-    ble->ble_error_message = "Device not compatible";
-    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    ble->ble_error_message = strerror(errno);
+    _CALL_EVENT_HANDLER(ble_on_error_handler_t, BLE_ERROR, ble, ble->ble_error_message);
   } else {
     ble->ble_error_message = "Not connect to a device: call ble_connect_to() before";
-    ((ble_on_error_handler_t)ble->event_handlers[BLE_ERROR])(ble, ble->ble_error_message);
+    _CALL_EVENT_HANDLER(ble_on_error_handler_t, BLE_ERROR, ble, ble->ble_error_message);
   }
 }
 
-void  ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_handler) {
-  ble->event_handlers[e] = event_handler;
+void  ble_register_event_handler(ble_t* ble, enum ble_events_e e, void* event_handler, void* data) {
+  ble->event_handlers[e] = (typeof(*ble->event_handlers)) { .handler = event_handler, .data = data };
 }
 
 int ble_connect_to(ble_t* ble, const char* addr, uint8_t channel) {
+  #define RFCOMM_CHANNEL_MAX 30
+
   channel = channel ? channel : ble->channel;
   
   if (channel == 0) {
     ble->ble_error_message = "No channel found, please run 'ble_find_rfcomm_channel()' before";
+    return -1;
+  }
+
+  bool  retry = channel <= RFCOMM_CHANNEL_MAX; 
+  if (!retry) {
+    channel -= RFCOMM_CHANNEL_MAX;
   }
 
   ble->sock = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
@@ -320,9 +341,19 @@ int ble_connect_to(ble_t* ble, const char* addr, uint8_t channel) {
   ble->rem_addr.rc_channel = (uint8_t) channel;
   str2ba(addr, &ble->rem_addr.rc_bdaddr);
 
-  int connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
+  int   connect_res;
+
+  connect_res = connect(ble->sock, (struct sockaddr *)&ble->rem_addr, sizeof(ble->rem_addr));
 
   if (connect_res < 0) {
+    close(ble->sock);
+
+    if (errno == ECONNREFUSED && retry) {
+#     if !defined(NDEBUG)
+        fprintf(stderr, "Level_engine: connection refused, retrying (%d)...\n", retry);
+#     endif
+      return ble_connect_to(ble, addr, channel + RFCOMM_CHANNEL_MAX);
+    }
     ble->ble_error_message = strerror(errno);
     return connect_res;
   }

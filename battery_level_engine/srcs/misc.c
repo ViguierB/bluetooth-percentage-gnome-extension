@@ -1,5 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <assert.h>
 
 #define _BLE_INTERNAL_
 #include "battery_level_engine.h"
@@ -81,4 +83,26 @@ char* _ble_strstr(const ble_t* ble, const char* find, size_t slen)
     s--;
   }
   return ((char *)s);
+}
+
+char* str_trim_and_dup(const char* source) {
+  size_t      before = 0, after = 0, len = strlen(source); 
+  const char* end = source + len;
+
+  while (isspace(source[before])) { ++before; }
+  while (isspace(end[-after])) { ++after; }
+
+  if (before == 0 && after == 0) {
+    return strdup(source);
+  }
+
+  size_t  new_len = len - (before + after);
+  char*   result = malloc(1 + new_len);
+
+  assert(!!result);
+
+  memcpy(result, source + before, new_len);
+  result[new_len] = 0;
+
+  return result;
 }
