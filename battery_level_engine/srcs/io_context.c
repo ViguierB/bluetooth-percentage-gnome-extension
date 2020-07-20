@@ -62,7 +62,14 @@ static void _internal_ioc_on_abort_pipe_ready(int fd, uint32_t events, void* dat
   (void) data;
   char buf[8];
 
-  read(fd, buf, 8); // flush pipe
+  ssize_t r = read(fd, buf, 8); // flush pipe
+  if (r < 0) {
+    if (errno == EINTR) {
+      r = read(fd, buf, 8);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
 }
 
 io_context_t* create_io_context() {
@@ -195,7 +202,14 @@ void  ioc_stop_wait(io_context_t* ioc) {
   char c = 1;
 
   if (ioc->is_runnning) {
-    write(ioc->abort_pipe_trick[1], &c, 1);
+    ssize_t r = write(ioc->abort_pipe_trick[1], &c, 1);
+    if (r < 0) {
+      if (errno == EINTR) {
+        r = write(ioc->abort_pipe_trick[1], &c, 1);
+      } else {
+        exit(EXIT_FAILURE);
+      }
+    }
   }
 }
 
